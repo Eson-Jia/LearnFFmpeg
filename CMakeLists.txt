@@ -4,3 +4,8 @@ project(LearnFFmpeg)
 set(CMAKE_CXX_STANDARD 11)
 
 add_executable(LearnFFmpeg main.cpp)
+
+target_link_libraries(
+        LearnFFmpeg
+        avformat
+)
