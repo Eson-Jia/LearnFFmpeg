@@ -8,4 +8,9 @@ add_executable(LearnFFmpeg main.cpp)
 target_link_libraries(
         LearnFFmpeg
         avformat
+        avcodec
+        avdevice
+        avfilter
+        avresample
+        avutil
 )
