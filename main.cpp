@@ -8,6 +8,7 @@ extern "C"{
 #include <libavfilter/avfilter.h>
 #include <libavresample/avresample.h>
 #include <libavutil/avutil.h>
+#include <libswscale/swscale.h>
 }
 using namespace std;
 int main() {
@@ -23,6 +24,9 @@ int main() {
     cout << "avresample version:" << resampleVersion << endl;
     int utilVersion = avutil_version();
     cout << "avutil version:" << utilVersion << endl;
+    int swscaleVersion = swscale_version();
+    cout << "swscale version:" << swscaleVersion <<endl;
     this_thread::sleep_for(chrono::milliseconds (1));
     return 0;
 }
+
