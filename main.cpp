@@ -9,6 +9,7 @@ extern "C"{
 #include <libavresample/avresample.h>
 #include <libavutil/avutil.h>
 #include <libswscale/swscale.h>
+#include <libpostproc/postprocess.h>
 }
 using namespace std;
 int main() {
@@ -26,6 +27,8 @@ int main() {
     cout << "avutil version:" << utilVersion << endl;
     int swscaleVersion = swscale_version();
     cout << "swscale version:" << swscaleVersion <<endl;
+    int postprocVersion = postproc_version();
+    cout << "postproc version:" << postprocVersion <<endl;
     this_thread::sleep_for(chrono::milliseconds (1));
     return 0;
 }

@@ -13,6 +13,7 @@ target_link_libraries(
         avresample
         avutil
         swscale
+        postproc
 )
 
 add_executable(avio_reading avio_reading.c)
