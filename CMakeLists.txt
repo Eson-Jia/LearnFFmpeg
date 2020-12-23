@@ -10,7 +10,6 @@ target_link_libraries(
         avcodec
         avdevice
         avfilter
-        avresample
         avutil
         swscale
         postproc

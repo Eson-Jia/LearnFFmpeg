@@ -6,7 +6,6 @@ extern "C"{
 #include <libavcodec/avcodec.h>
 #include <libavdevice/avdevice.h>
 #include <libavfilter/avfilter.h>
-#include <libavresample/avresample.h>
 #include <libavutil/avutil.h>
 #include <libswscale/swscale.h>
 #include <libpostproc/postprocess.h>
@@ -21,8 +20,8 @@ int main() {
     cout << "avdevice version:" << deviceVersion << endl;
     int filterVersion = avfilter_version();
     cout << "avfilter version:" << filterVersion << endl;
-    int resampleVersion = avresample_version();
-    cout << "avresample version:" << resampleVersion << endl;
+//    int resampleVersion = avresample_version();
+//    cout << "avresample version:" << resampleVersion << endl;
     int utilVersion = avutil_version();
     cout << "avutil version:" << utilVersion << endl;
     int swscaleVersion = swscale_version();
