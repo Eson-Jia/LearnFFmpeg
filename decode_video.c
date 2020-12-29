@@ -93,7 +93,7 @@ int main(int argc, char **argv)
         exit(1);
     /* set end of buffer to 0 (this ensures that no overreading happens for damaged MPEG streams) */
     memset(inbuf + INBUF_SIZE, 0, AV_INPUT_BUFFER_PADDING_SIZE);
-    /* find the MPEG-1 video decoder */
+    /* find the H264 video decoder */
     codec = avcodec_find_decoder(AV_CODEC_ID_H264);
     if (!codec) {
         fprintf(stderr, "Codec not found\n");
