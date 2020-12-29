@@ -51,10 +51,6 @@ int main(int argc, char **argv) {
     }
     input = string(argv[1]);
     output = string(argv[2]);
-    AVPacket *pkg = av_packet_alloc();
-    if (pkg == nullptr) {
-        exit(1);
-    }
     uint8_t inbuf[INBUF_SIZE + AV_INPUT_BUFFER_PADDING_SIZE];
     memset(inbuf + INBUF_SIZE, 0, AV_INPUT_BUFFER_PADDING_SIZE);
     AVCodec *codec = avcodec_find_decoder(AV_CODEC_ID_H264);
