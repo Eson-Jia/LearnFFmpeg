@@ -53,9 +53,10 @@ target_link_libraries(
         avcodec
 )
 
-add_executable(decode_video_cpp decode_video.cpp)
+add_executable(encode_video_cpp encode_video.cpp)
+
 target_link_libraries(
-        decode_video_cpp
+        encode_video_cpp
         avcodec
         avutil
 )
