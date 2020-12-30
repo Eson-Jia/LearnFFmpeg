@@ -60,3 +60,12 @@ target_link_libraries(
         avcodec
         avutil
 )
+
+add_executable(demuxing_decoding demuxing_decoding.c)
+
+target_link_libraries(
+        demuxing_decoding
+        avformat
+        avutil
+        avcodec
+)
