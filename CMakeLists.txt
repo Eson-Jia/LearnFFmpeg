@@ -69,3 +69,54 @@ target_link_libraries(
         avutil
         avcodec
 )
+
+add_executable(decode_video_cpp decode_video.cpp)
+
+target_link_libraries(
+        decode_video_cpp
+        avcodec
+        avutil
+)
+
+add_executable(decode_video_implement decode_video_implement.cpp)
+
+target_link_libraries(
+        decode_video_implement
+        avcodec
+        avutil
+)
+
+add_executable(test_ofstream test_ofstream.cpp)
+
+target_link_libraries(
+        test_ofstream
+)
+
+add_executable(ffhash ffhash.c)
+
+target_link_libraries(
+        ffhash
+        avcodec
+        avutil
+)
+
+add_executable(filter_audio filter_audio.c)
+
+target_link_libraries(
+        filter_audio
+        avcodec
+        avutil
+        avfilter
+        m
+)
+
+add_executable(filtering_video filtering_video.c)
+
+target_link_libraries(
+        filtering_video
+        avcodec
+        avutil
+        avfilter
+        avformat
+)
+
