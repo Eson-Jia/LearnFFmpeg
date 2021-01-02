@@ -3,6 +3,11 @@ project(LearnFFmpeg)
 
 set(CMAKE_CXX_STANDARD 11)
 
+IF (APPLE)
+    include_directories(/usr/local/include)
+    link_directories(/usr/local/lib)
+ENDIF()
+
 add_executable(LearnFFmpeg main.cpp)
 target_link_libraries(
         LearnFFmpeg
