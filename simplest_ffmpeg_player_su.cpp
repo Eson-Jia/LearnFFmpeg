@@ -207,34 +207,42 @@ int main(int argc, char *argv[]) {
     //------------SDL End------------
     //Event Loop
 
-    for (;;) {
+    while (true) {
         //Wait
         SDL_WaitEvent(&event);
         if (event.type == SFM_REFRESH_EVENT) {
-            while (1) {
+            while (true) {
                 if (av_read_frame(pFormatCtx, packet) < 0)
                     thread_exit = 1;
-
-                if (packet->stream_index == videoindex)
-                    break;
+                if (packet->stream_index != videoindex)
+                    continue;
+                ret = avcodec_send_packet(pCodecCtx, packet);
+                if (ret < 0) {
+                    fprintf(stderr, "Failed in send packet");
+                    exit(1);
+                }
+                while (ret >= 0) {
+                    ret = avcodec_receive_frame(pCodecCtx, pFrame);
+                    if (ret < 0) {
+                        if (ret == AVERROR_EOF || ret == AVERROR(EAGAIN)) {
+                            break;
+                        }
+                        fprintf(stderr, "failed in receive frame");
+                        exit(1);
+                    }
+                    sws_scale(img_convert_ctx, (const unsigned char *const *) pFrame->data, pFrame->linesize, 0,
+                              pCodecCtx->height, pFrameYUV->data, pFrameYUV->linesize);
+                    //SDL---------------------------
+                    SDL_UpdateTexture(sdlTexture, NULL, pFrameYUV->data[0], pFrameYUV->linesize[0]);
+                    SDL_RenderClear(sdlRenderer);
+                    //SDL_RenderCopy( sdlRenderer, sdlTexture, &sdlRect, &sdlRect );
+                    SDL_RenderCopy(sdlRenderer, sdlTexture, NULL, NULL);
+                    SDL_RenderPresent(sdlRenderer);
+                    //SDL End-----------------------
+                }
+                av_free_packet(packet);
+                break;
             }
-            ret = avcodec_decode_video2(pCodecCtx, pFrame, &got_picture, packet);
-            if (ret < 0) {
-                printf("Decode Error.\n");
-                return -1;
-            }
-            if (got_picture) {
-                sws_scale(img_convert_ctx, (const unsigned char *const *) pFrame->data, pFrame->linesize, 0,
-                          pCodecCtx->height, pFrameYUV->data, pFrameYUV->linesize);
-                //SDL---------------------------
-                SDL_UpdateTexture(sdlTexture, NULL, pFrameYUV->data[0], pFrameYUV->linesize[0]);
-                SDL_RenderClear(sdlRenderer);
-                //SDL_RenderCopy( sdlRenderer, sdlTexture, &sdlRect, &sdlRect );
-                SDL_RenderCopy(sdlRenderer, sdlTexture, NULL, NULL);
-                SDL_RenderPresent(sdlRenderer);
-                //SDL End-----------------------
-            }
-            av_free_packet(packet);
         } else if (event.type == SDL_KEYDOWN) {
             //Pause
             if (event.key.keysym.sym == SDLK_SPACE)
