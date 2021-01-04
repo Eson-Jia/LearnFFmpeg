@@ -131,11 +131,11 @@ int main(int argc, char *argv[]) {
     pFormatCtx = avformat_alloc_context();
 
     if (avformat_open_input(&pFormatCtx, filepath, NULL, NULL) != 0) {
-        printf("Couldn't open input stream.\n");
+        fprintf(stderr, "Couldn't open input stream.\n");
         return -1;
     }
     if (avformat_find_stream_info(pFormatCtx, NULL) < 0) {
-        printf("Couldn't find stream information.\n");
+        fprintf(stderr, "Couldn't find stream information.\n");
         return -1;
     }
     videoindex = -1;
@@ -145,17 +145,17 @@ int main(int argc, char *argv[]) {
             break;
         }
     if (videoindex == -1) {
-        printf("Didn't find a video stream.\n");
+        fprintf(stderr, "Didn't find a video stream.\n");
         return -1;
     }
     pCodecCtx = pFormatCtx->streams[videoindex]->codec;
     pCodec = avcodec_find_decoder(pCodecCtx->codec_id);
     if (pCodec == NULL) {
-        printf("Codec not found.\n");
+        fprintf(stderr, "Codec not found.\n");
         return -1;
     }
     if (avcodec_open2(pCodecCtx, pCodec, NULL) < 0) {
-        printf("Could not open codec.\n");
+        fprintf(stderr, "Could not open codec.\n");
         return -1;
     }
     pFrame = av_frame_alloc();
