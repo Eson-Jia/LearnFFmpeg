@@ -6,7 +6,7 @@ set(CMAKE_CXX_STANDARD 11)
 IF (APPLE)
     include_directories(/usr/local/include)
     link_directories(/usr/local/lib)
-ENDIF()
+ENDIF ()
 
 add_executable(LearnFFmpeg main.cpp)
 target_link_libraries(
@@ -124,4 +124,18 @@ target_link_libraries(
         avfilter
         avformat
 )
+
+add_executable(simplest_ffmpeg_player_su simplest_ffmpeg_player_su.cpp)
+
+target_link_libraries(
+        simplest_ffmpeg_player_su
+        avcodec
+        avutil
+        avfilter
+        avformat
+        SDL2-2.0
+        swscale
+)
+
+
 
