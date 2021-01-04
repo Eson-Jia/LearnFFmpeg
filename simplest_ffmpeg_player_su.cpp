@@ -128,8 +128,6 @@ int main(int argc, char *argv[]) {
     }
     char *filepath = argv[1];
 
-    av_register_all();
-    avformat_network_init();
     pFormatCtx = avformat_alloc_context();
 
     if (avformat_open_input(&pFormatCtx, filepath, NULL, NULL) != 0) {
