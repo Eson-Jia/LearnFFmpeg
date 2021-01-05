@@ -121,7 +121,6 @@ int main(int argc, char *argv[]) {
 
     struct SwsContext *img_convert_ctx;
 
-    //char filepath[]="bigbuckbunny_480x272.h265";
     if (argc < 2) {
         fprintf(stderr, "file path is required\n");
         exit(1);
