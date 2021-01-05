@@ -108,7 +108,7 @@ int main(int argc, char *argv[]) {
     AVFrame *pFrame, *pFrameYUV;
     unsigned char *out_buffer;
     AVPacket *packet;
-    int ret, got_picture;
+    int ret;
 
     //------------SDL----------------
     int screen_w, screen_h;
