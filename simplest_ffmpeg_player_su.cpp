@@ -103,8 +103,8 @@ int main(int argc, char *argv[]) {
 
     AVFormatContext *pFormatCtx;
     int i, videoindex;
-    AVCodecContext *pCodecCtx;
-    AVCodec *pCodec;
+    AVCodecContext *videoCodecCtx;
+    AVCodec *videoCodec;
     AVFrame *pFrame, *pFrameYUV;
     unsigned char *out_buffer;
     AVPacket *packet;
@@ -147,13 +147,13 @@ int main(int argc, char *argv[]) {
         fprintf(stderr, "Didn't find a video stream.\n");
         return -1;
     }
-    pCodecCtx = pFormatCtx->streams[videoindex]->codec;
-    pCodec = avcodec_find_decoder(pCodecCtx->codec_id);
-    if (pCodec == NULL) {
+    videoCodecCtx = pFormatCtx->streams[videoindex]->codec;
+    videoCodec = avcodec_find_decoder(videoCodecCtx->codec_id);
+    if (videoCodec == NULL) {
         fprintf(stderr, "Codec not found.\n");
         return -1;
     }
-    if (avcodec_open2(pCodecCtx, pCodec, NULL) < 0) {
+    if (avcodec_open2(videoCodecCtx, videoCodec, NULL) < 0) {
         fprintf(stderr, "Could not open codec.\n");
         return -1;
     }
@@ -161,17 +161,17 @@ int main(int argc, char *argv[]) {
     pFrameYUV = av_frame_alloc();
 
     out_buffer = (unsigned char *) av_malloc(
-            av_image_get_buffer_size(AV_PIX_FMT_YUV420P, pCodecCtx->width, pCodecCtx->height, 1));
+            av_image_get_buffer_size(AV_PIX_FMT_YUV420P, videoCodecCtx->width, videoCodecCtx->height, 1));
     av_image_fill_arrays(pFrameYUV->data, pFrameYUV->linesize, out_buffer,
-                         AV_PIX_FMT_YUV420P, pCodecCtx->width, pCodecCtx->height, 1);
+                         AV_PIX_FMT_YUV420P, videoCodecCtx->width, videoCodecCtx->height, 1);
 
     //Output Info-----------------------------
     printf("---------------- File Information ---------------\n");
     av_dump_format(pFormatCtx, 0, filepath, 0);
     printf("-------------------------------------------------\n");
 
-    img_convert_ctx = sws_getContext(pCodecCtx->width, pCodecCtx->height, pCodecCtx->pix_fmt,
-                                     pCodecCtx->width, pCodecCtx->height, AV_PIX_FMT_YUV420P, SWS_BICUBIC, NULL, NULL,
+    img_convert_ctx = sws_getContext(videoCodecCtx->width, videoCodecCtx->height, videoCodecCtx->pix_fmt,
+                                     videoCodecCtx->width, videoCodecCtx->height, AV_PIX_FMT_YUV420P, SWS_BICUBIC, NULL, NULL,
                                      NULL);
 
 
@@ -180,8 +180,8 @@ int main(int argc, char *argv[]) {
         return -1;
     }
     //SDL 2.0 Support for multiple windows
-    screen_w = pCodecCtx->width;
-    screen_h = pCodecCtx->height;
+    screen_w = videoCodecCtx->width;
+    screen_h = videoCodecCtx->height;
     screen = SDL_CreateWindow("Simplest ffmpeg player's Window", SDL_WINDOWPOS_UNDEFINED, SDL_WINDOWPOS_UNDEFINED,
                               screen_w, screen_h, SDL_WINDOW_OPENGL);
 
@@ -192,8 +192,8 @@ int main(int argc, char *argv[]) {
     sdlRenderer = SDL_CreateRenderer(screen, -1, 0);
     //IYUV: Y + U + V  (3 planes)
     //YV12: Y + V + U  (3 planes)
-    sdlTexture = SDL_CreateTexture(sdlRenderer, SDL_PIXELFORMAT_IYUV, SDL_TEXTUREACCESS_STREAMING, pCodecCtx->width,
-                                   pCodecCtx->height);
+    sdlTexture = SDL_CreateTexture(sdlRenderer, SDL_PIXELFORMAT_IYUV, SDL_TEXTUREACCESS_STREAMING, videoCodecCtx->width,
+                                   videoCodecCtx->height);
 
     sdlRect.x = 0;
     sdlRect.y = 0;
@@ -215,13 +215,13 @@ int main(int argc, char *argv[]) {
                     thread_exit = 1;
                 if (packet->stream_index != videoindex)
                     continue;
-                ret = avcodec_send_packet(pCodecCtx, packet);
+                ret = avcodec_send_packet(videoCodecCtx, packet);
                 if (ret < 0) {
                     fprintf(stderr, "Failed in send packet");
                     exit(1);
                 }
                 while (ret >= 0) {
-                    ret = avcodec_receive_frame(pCodecCtx, pFrame);
+                    ret = avcodec_receive_frame(videoCodecCtx, pFrame);
                     if (ret < 0) {
                         if (ret == AVERROR_EOF || ret == AVERROR(EAGAIN)) {
                             break;
@@ -230,7 +230,7 @@ int main(int argc, char *argv[]) {
                         exit(1);
                     }
                     sws_scale(img_convert_ctx, (const unsigned char *const *) pFrame->data, pFrame->linesize, 0,
-                              pCodecCtx->height, pFrameYUV->data, pFrameYUV->linesize);
+                              videoCodecCtx->height, pFrameYUV->data, pFrameYUV->linesize);
                     //SDL---------------------------
                     SDL_UpdateTexture(sdlTexture, NULL, pFrameYUV->data[0], pFrameYUV->linesize[0]);
                     SDL_RenderClear(sdlRenderer);
@@ -260,7 +260,7 @@ int main(int argc, char *argv[]) {
     //--------------
     av_frame_free(&pFrameYUV);
     av_frame_free(&pFrame);
-    avcodec_close(pCodecCtx);
+    avcodec_close(videoCodecCtx);
     avformat_close_input(&pFormatCtx);
 
     return 0;
