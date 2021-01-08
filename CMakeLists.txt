@@ -138,4 +138,23 @@ target_link_libraries(
 )
 
 
+add_executable(play_audio play_audio.cpp)
+
+target_link_libraries(
+        play_audio
+        avcodec
+        avutil
+        avformat
+        SDL2-2.0
+)
+
+add_executable(resample_audio resample_audio.c)
+target_link_libraries(
+        resample_audio
+        avcodec
+        avutil
+        avformat
+        swresample
+        m
+)
 
