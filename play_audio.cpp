@@ -1,7 +1,8 @@
 extern "C" {
 #include <libavformat/avformat.h>
 #include <libavcodec/avcodec.h>
-#include <libswresample/>
+#include <libswresample/swresample.h>
+#include <libavutil/opt.h>
 #include <SDL2/SDL_audio.h>
 #include <SDL2/SDL.h>
 }
@@ -23,6 +24,7 @@ typedef struct {
 } PacketQueue;
 
 PacketQueue packetQueue;
+SwrContext *swrContext = nullptr;
 
 void init_queue(PacketQueue *pqueue) {
     memset(pqueue, 0, sizeof(PacketQueue));
@@ -93,8 +95,16 @@ static int packet_queue_get(PacketQueue *q, AVPacket *pkt, int block) {
     return ret;
 }
 
-int audio_resample(){
+int init_swrcontext(AVCodec *codec, AVCodecContext *codecCtx, SwrContext **swrContext) {
+    *swrContext = swr_alloc();
 
+    av_opt_set_int(*swrContext, "in_channel_layout", (int64_t) codec->channel_layouts, 0);
+    av_opt_set_int(*swrContext, "out_channel_layout", (int64_t) codec->channel_layouts, 0);
+    av_opt_set_int(*swrContext, "in_sample_rate", codecCtx->sample_rate, 0);
+    av_opt_set_int(*swrContext, "out_sample_rate", codecCtx->sample_rate, 0);
+    av_opt_set_sample_fmt(*swrContext, "in_sample_fmt", AV_SAMPLE_FMT_FLTP, 0);
+    av_opt_set_sample_fmt(*swrContext, "out_sample_fmt", AV_SAMPLE_FMT_FLT, 0);
+    return swr_init(*swrContext);
 }
 
 int audio_decode_frame(AVCodecContext *audioCtx, uint8_t *audio_buf, int buf_size) {
@@ -110,6 +120,7 @@ int audio_decode_frame(AVCodecContext *audioCtx, uint8_t *audio_buf, int buf_siz
                 cerr << "Error during decoding" << endl;
                 exit(1);
             }
+            swr_convert(swrContext,&audio_buf,buf_size,)
             auto data_size = av_samples_get_buffer_size(nullptr,
                                                         audioCtx->channels,
                                                         frame->nb_samples,
@@ -210,6 +221,10 @@ int main(int argc, char **argv) {
     ret = SDL_Init(SDL_INIT_AUDIO | SDL_INIT_TIMER);
     if (ret < 0) {
         cerr << "failed in sdl init" << endl;
+        exit(1);
+    }
+    if (init_swrcontext(audioCodec, audioCodecCtx, &swrContext) < 0) {
+        cerr << "failed in init swr context" << endl;
         exit(1);
     }
     SDL_AudioSpec audioSpec, spec;

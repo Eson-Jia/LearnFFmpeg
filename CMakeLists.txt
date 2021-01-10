@@ -137,16 +137,52 @@ target_link_libraries(
         swscale
 )
 
-
-add_executable(play_audio play_audio.cpp)
-
+IF (APPLE)
+    target_link_libraries(
+            simplest_ffmpeg_player_su
+            avcodec
+            avutil
+            avfilter
+            avformat
+            SDL2
+            swscale
+    )
+ELSE()
 target_link_libraries(
-        play_audio
+        simplest_ffmpeg_player_su
         avcodec
         avutil
+        avfilter
         avformat
         SDL2-2.0
+        swscale
 )
+ENDIF()
+
+
+
+
+add_executable(play_audio play_audio.cpp)
+IF(APPLE)
+    target_link_libraries(
+            play_audio
+            avcodec
+            avutil
+            avformat
+            swresample
+            SDL2
+    )
+
+ELSE()
+    target_link_libraries(
+            play_audio
+            avcodec
+            avutil
+            avformat
+            SDL2-2.0
+            swresample
+    )
+ENDIF()
 
 add_executable(resample_audio resample_audio.c)
 target_link_libraries(
