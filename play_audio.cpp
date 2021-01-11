@@ -95,11 +95,11 @@ static int packet_queue_get(PacketQueue *q, AVPacket *pkt, int block) {
     return ret;
 }
 
-int init_swrcontext(AVCodec *codec, AVCodecContext *codecCtx, SwrContext **swrContext) {
+int init_swrcontext(AVCodecContext *codecCtx, SwrContext **swrContext) {
     *swrContext = swr_alloc();
-
-    av_opt_set_int(*swrContext, "in_channel_layout", (int64_t) codec->channel_layouts, 0);
-    av_opt_set_int(*swrContext, "out_channel_layout", (int64_t) codec->channel_layouts, 0);
+    //
+    av_opt_set_int(*swrContext, "in_channel_layout", codecCtx->channel_layout, 0);
+    av_opt_set_int(*swrContext, "out_channel_layout", codecCtx->channel_layout, 0);
     av_opt_set_int(*swrContext, "in_sample_rate", codecCtx->sample_rate, 0);
     av_opt_set_int(*swrContext, "out_sample_rate", codecCtx->sample_rate, 0);
     av_opt_set_sample_fmt(*swrContext, "in_sample_fmt", AV_SAMPLE_FMT_FLTP, 0);
@@ -110,30 +110,27 @@ int init_swrcontext(AVCodec *codec, AVCodecContext *codecCtx, SwrContext **swrCo
 int audio_decode_frame(AVCodecContext *audioCtx, uint8_t *audio_buf, int buf_size) {
     static int ret = -1;
     auto packet = av_packet_alloc();
-    auto frame = av_frame_alloc();
+    static AVFrame frame;
     while (true) {
         while (ret >= 0) {
-            ret = avcodec_receive_frame(audioCtx, frame);
+            ret = avcodec_receive_frame(audioCtx, &frame);
             if (ret == AVERROR(EAGAIN) || ret == AVERROR_EOF)
                 break;
             else if (ret < 0) {
                 cerr << "Error during decoding" << endl;
                 exit(1);
             }
-            swr_convert(swrContext,&audio_buf,buf_size,)
-            auto data_size = av_samples_get_buffer_size(nullptr,
-                                                        audioCtx->channels,
-                                                        frame->nb_samples,
-                                                        audioCtx->sample_fmt,
-                                                        1);
-            if (data_size > buf_size) {
-                cerr << "data_size > buf_size" << endl;
+            auto data_size = av_samples_get_buffer_size(nullptr, frame.channels, frame.nb_samples,
+                                                        audioCtx->sample_fmt, 0);
+            int convert_ret = swr_convert(swrContext,
+                                          &audio_buf,
+                                          frame.nb_samples,
+                                          (const uint8_t **) frame.data,
+                                          frame.nb_samples);
+            if (convert_ret < 0) {
+                cerr << "failed in convert" << endl;
                 exit(1);
             }
-            if (data_size <= 0) {
-                continue;
-            }
-            memcpy(audio_buf, frame->data[0], data_size);
             return data_size;
         }
         if (packet->data) {
@@ -207,7 +204,8 @@ int main(int argc, char **argv) {
         }
     }
     AVCodec *audioCodec = avcodec_find_decoder(parameters->codec_id);
-    auto audioCodecCtx = avcodec_alloc_context3(audioCodec);
+    // 注意 avcodec_alloc_context3 和 avcodec_open2 可以在一个位置传入 audioCodec,但是如果两个位置都传入的话需要两个 codec 相等
+    auto audioCodecCtx = avcodec_alloc_context3(nullptr);
     ret = avcodec_parameters_to_context(audioCodecCtx, parameters);
     if (ret < 0) {
         cerr << "failed in parameters to context" << endl;
@@ -223,7 +221,7 @@ int main(int argc, char **argv) {
         cerr << "failed in sdl init" << endl;
         exit(1);
     }
-    if (init_swrcontext(audioCodec, audioCodecCtx, &swrContext) < 0) {
+    if (init_swrcontext(audioCodecCtx, &swrContext) < 0) {
         cerr << "failed in init swr context" << endl;
         exit(1);
     }
