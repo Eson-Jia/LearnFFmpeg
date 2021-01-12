@@ -3,6 +3,8 @@ extern "C" {
 #include <libavcodec/avcodec.h>
 #include <libswresample/swresample.h>
 #include <libavutil/opt.h>
+#include <libavutil/imgutils.h>
+#include <libswscale/swscale.h>
 #include <SDL2/SDL_audio.h>
 #include <SDL2/SDL.h>
 }
@@ -12,6 +14,7 @@ extern "C" {
 
 #define SDL_AUDIO_BUFFER_SIZE 4096
 #define MAX_AUDIO_FRAME_SIZE 192000
+#define SFM_REFRESH_EVENT  (SDL_USEREVENT + 1)
 int quit = 0;
 using namespace std;
 
@@ -102,7 +105,7 @@ int init_swrcontext(AVCodecContext *codecCtx, SwrContext **swrContext) {
     av_opt_set_int(*swrContext, "out_channel_layout", codecCtx->channel_layout, 0);
     av_opt_set_int(*swrContext, "in_sample_rate", codecCtx->sample_rate, 0);
     av_opt_set_int(*swrContext, "out_sample_rate", codecCtx->sample_rate, 0);
-    av_opt_set_sample_fmt(*swrContext, "in_sample_fmt", AV_SAMPLE_FMT_FLTP, 0);
+    av_opt_set_sample_fmt(*swrContext, "in_sample_fmt", codecCtx->sample_fmt, 0);
     av_opt_set_sample_fmt(*swrContext, "out_sample_fmt", AV_SAMPLE_FMT_FLT, 0);
     return swr_init(*swrContext);
 }
@@ -191,24 +194,32 @@ int main(int argc, char **argv) {
         exit(1);
     }
     av_dump_format(formatCtx, 0, argv[1], 0);
-    auto audioStreamIndex = 0;
-    AVCodecParameters *parameters = avcodec_parameters_alloc();
+    auto audioStreamIndex = -1, videoStreamIndex = -1;
+    AVCodecParameters *audioParameters = avcodec_parameters_alloc();
+    AVCodecParameters *videoParameters = avcodec_parameters_alloc();
     for (int i = 0; i < formatCtx->nb_streams; ++i) {
         if (formatCtx->streams[i]->codecpar->codec_type == AVMEDIA_TYPE_AUDIO) {
             audioStreamIndex = i;
-            if (avcodec_parameters_copy(parameters, formatCtx->streams[i]->codecpar) < 0) {
+            if (avcodec_parameters_copy(audioParameters, formatCtx->streams[i]->codecpar) < 0) {
                 cerr << "failed in copy parameter" << endl;
                 exit(1);
             }
-            break;
+        }
+        if (formatCtx->streams[i]->codecpar->codec_type == AVMEDIA_TYPE_VIDEO) {
+            videoStreamIndex = i;
+            if (avcodec_parameters_copy(videoParameters, formatCtx->streams[i]->codecpar) < 0) {
+                cerr << "failed in copy video parameter" << endl;
+            }
         }
     }
-    AVCodec *audioCodec = avcodec_find_decoder(parameters->codec_id);
+
+    // audio codec context
+    AVCodec *audioCodec = avcodec_find_decoder(audioParameters->codec_id);
     // 注意 avcodec_alloc_context3 和 avcodec_open2 可以在一个位置传入 audioCodec,但是如果两个位置都传入的话需要两个 codec 相等
     auto audioCodecCtx = avcodec_alloc_context3(nullptr);
-    ret = avcodec_parameters_to_context(audioCodecCtx, parameters);
+    ret = avcodec_parameters_to_context(audioCodecCtx, audioParameters);
     if (ret < 0) {
-        cerr << "failed in parameters to context" << endl;
+        cerr << "failed in audio Parameters to context" << endl;
         exit(1);
     }
     ret = avcodec_open2(audioCodecCtx, audioCodec, nullptr);
@@ -216,7 +227,22 @@ int main(int argc, char **argv) {
         cerr << "failed in codec open" << endl;
         exit(1);
     }
-    ret = SDL_Init(SDL_INIT_AUDIO | SDL_INIT_TIMER);
+
+    // video codec context
+    AVCodec *videoCodec = avcodec_find_decoder(videoParameters->codec_id);
+    auto videoCodecCtx = avcodec_alloc_context3(nullptr);
+    ret = avcodec_parameters_to_context(videoCodecCtx, videoParameters);
+    if (ret < 0) {
+        cerr << "failed in audio Parametes to context" << endl;
+        exit(1);
+    }
+    ret = avcodec_open2(videoCodecCtx, videoCodec, nullptr);
+    if (ret < 0) {
+        cerr << "failed in video Parametes to context" << endl;
+        exit(1);
+    }
+
+    ret = SDL_Init(SDL_INIT_AUDIO | SDL_INIT_TIMER | SDL_INIT_VIDEO);
     if (ret < 0) {
         cerr << "failed in sdl init" << endl;
         exit(1);
@@ -242,12 +268,49 @@ int main(int argc, char **argv) {
     init_queue(&packetQueue);
     SDL_Event event;
     AVPacket packet;
+    auto srcWith = videoCodecCtx->width;
+    auto srcHeight = videoCodecCtx->height;
+    auto image_convert_context = sws_getContext(
+            srcWith,
+            srcHeight,
+            videoCodecCtx->pix_fmt,
+            srcWith,
+            srcHeight,
+            AV_PIX_FMT_YUV420P,
+            0,
+            nullptr,
+            nullptr,
+            nullptr);
+    auto originFrame = av_frame_alloc();
+    auto YUVFrame = av_frame_alloc();
+    auto outBUffer = (uint8_t *) av_malloc(av_image_get_buffer_size(AV_PIX_FMT_YUV420P, srcWith, srcHeight, 1));
+    av_image_fill_arrays(YUVFrame->data, YUVFrame->linesize, outBUffer, AV_PIX_FMT_YUV420P, srcWith, srcHeight, 1);
+    auto window = SDL_CreateWindow("player",
+                                   SDL_WINDOWPOS_UNDEFINED,
+                                   SDL_WINDOWPOS_UNDEFINED,
+                                   srcWith,
+                                   srcHeight,
+                                   SDL_WINDOW_OPENGL);
+    if (window == nullptr) {
+        cerr << "failed in create window" << endl;
+        exit(1);
+    }
+    auto render = SDL_CreateRenderer(
+            window,
+            -1,
+            0);
+    auto texture = SDL_CreateTexture(
+            render,
+            SDL_PIXELFORMAT_IYUV,
+            SDL_TEXTUREACCESS_STREAMING,
+            srcWith,
+            srcHeight);
     while (true) {
         auto ret = av_read_frame(formatCtx, &packet);
-        this_thread::sleep_for(chrono::milliseconds(10));
         if (ret == AVERROR_EOF || ret == AVERROR(EAGAIN)) {
             cout << "read frame finished" << endl;
-            this_thread::sleep_for(chrono::minutes(10));
+            this_thread::sleep_for(chrono::milliseconds(100));
+            continue;
         }
         if (ret < 0) {
             cerr << "failed in read packet" << endl;
@@ -255,13 +318,44 @@ int main(int argc, char **argv) {
         }
         if (packet.stream_index == audioStreamIndex) {
             packet_queue_put(&packetQueue, &packet);
+            continue;
+        }
+        if (packet.stream_index == videoStreamIndex) {
+            auto result = avcodec_send_packet(videoCodecCtx, &packet);
+            if (result == AVERROR_EOF || result == AVERROR(EAGAIN)) {
+                break;
+            }
+            if (result < 0) {
+                cerr << "failed in send packet" << endl;
+                exit(1);
+            }
+            do {
+                ret = avcodec_receive_frame(
+                        videoCodecCtx,
+                        originFrame);
+                if (ret == AVERROR_EOF || ret == AVERROR(EAGAIN)) {
+                    break;
+                }
+                sws_scale(
+                        image_convert_context,
+                        originFrame->data,
+                        originFrame->linesize,
+                        0,
+                        srcHeight,
+                        YUVFrame->data,
+                        YUVFrame->linesize);
+                SDL_UpdateTexture(texture, nullptr, YUVFrame->data[0], YUVFrame->linesize[0]);
+                SDL_RenderClear(render);
+                SDL_RenderCopy(render, texture, nullptr, nullptr);
+                SDL_RenderPresent(render);
+            } while (ret >= 0);
+            av_packet_unref(&packet);
         }
         SDL_PollEvent(&event);
         switch (event.type) {
             case SDL_QUIT:
                 SDL_Quit();
                 exit(0);
-                break;
             default:
                 break;
         }

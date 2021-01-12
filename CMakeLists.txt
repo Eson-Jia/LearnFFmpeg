@@ -170,6 +170,7 @@ IF(APPLE)
             avutil
             avformat
             swresample
+            swscale
             SDL2
     )
 
@@ -179,8 +180,9 @@ ELSE()
             avcodec
             avutil
             avformat
-            SDL2-2.0
             swresample
+            swscale
+            SDL2-2.0
     )
 ENDIF()
 
