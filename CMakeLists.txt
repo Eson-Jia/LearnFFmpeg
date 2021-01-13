@@ -196,3 +196,28 @@ target_link_libraries(
         m
 )
 
+add_executable(sync_video dranger/tutorial04.c)
+IF(APPLE)
+    target_link_libraries(
+            sync_video
+            avcodec
+            avutil
+            avformat
+            swresample
+            swscale
+            SDL2
+    )
+
+ELSE()
+    target_link_libraries(
+            sync_video
+            avcodec
+            avutil
+            avformat
+            swresample
+            swscale
+            SDL2-2.0
+    )
+ENDIF()
+
+
