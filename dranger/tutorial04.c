@@ -221,6 +221,17 @@ int audio_decode_frame(VideoState *is, uint8_t *audio_buf, int buf_size) {
     }
 }
 
+static void pgm_save(unsigned char *buf, int wrap, int xsize, int ysize,
+                     char *filename) {
+    FILE *f;
+    int i;
+    f = fopen(filename, "wb");
+    fprintf(f, "P5\n%d %d\n%d\n", xsize, ysize, 255);
+    for (i = 0; i < ysize; i++)
+        fwrite(buf + i * wrap, 1, xsize, f);
+    fclose(f);
+}
+
 void audio_callback(void *userdata, Uint8 *stream, int len) {
 
     VideoState *is = (VideoState *) userdata;
@@ -373,6 +384,9 @@ int queue_picture(VideoState *is, AVFrame *pFrame) {
         auto ret = sws_scale(is->sws_ctx, (uint8_t const *const *) pFrame->data,
                              pFrame->linesize, 0, is->video_ctx->height,
                              vp->frame->data, vp->frame->linesize);
+        char buff[1024];
+        sprintf(buff, "image-%d", is->video_ctx->frame_number);
+        pgm_save(vp->frame->data[0], vp->frame->linesize[0], vp->width, vp->height, buff);
         if (ret < 0) {
             fprintf(stderr, "failed in scale\n");
             exit(1);
