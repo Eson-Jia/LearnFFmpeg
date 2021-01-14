@@ -72,7 +72,6 @@ typedef struct VideoPicture {
 } VideoPicture;
 
 typedef struct VideoState {
-
     AVFormatContext *pFormatCtx;
     int videoStream, audioStream;
     AVStream *audio_st;
@@ -221,17 +220,6 @@ int audio_decode_frame(VideoState *is, uint8_t *audio_buf, int buf_size) {
     }
 }
 
-static void pgm_save(unsigned char *buf, int wrap, int xsize, int ysize,
-                     char *filename) {
-    FILE *f;
-    int i;
-    f = fopen(filename, "wb");
-    fprintf(f, "P5\n%d %d\n%d\n", xsize, ysize, 255);
-    for (i = 0; i < ysize; i++)
-        fwrite(buf + i * wrap, 1, xsize, f);
-    fclose(f);
-}
-
 void audio_callback(void *userdata, Uint8 *stream, int len) {
 
     VideoState *is = (VideoState *) userdata;
@@ -279,7 +267,7 @@ void video_display(VideoState *is) {
     vp = &is->pictq[is->pictq_rindex];
     if (vp->frame) {
         SDL_LockMutex(screen_mutex);
-        SDL_UpdateTexture(renderer, NULL, vp->frame->data[0], vp->frame->linesize[0]);
+        SDL_UpdateTexture(texture, NULL, vp->frame->data[0], vp->frame->linesize[0]);
         SDL_RenderClear(renderer);
         SDL_RenderCopy(renderer, texture, NULL, NULL);
         SDL_RenderPresent(renderer);
@@ -384,9 +372,6 @@ int queue_picture(VideoState *is, AVFrame *pFrame) {
         auto ret = sws_scale(is->sws_ctx, (uint8_t const *const *) pFrame->data,
                              pFrame->linesize, 0, is->video_ctx->height,
                              vp->frame->data, vp->frame->linesize);
-        char buff[1024];
-        sprintf(buff, "image-%d", is->video_ctx->frame_number);
-        pgm_save(vp->frame->data[0], vp->frame->linesize[0], vp->width, vp->height, buff);
         if (ret < 0) {
             fprintf(stderr, "failed in scale\n");
             exit(1);
@@ -620,14 +605,15 @@ int main(int argc, char *argv[]) {
     SDL_Event event;
 
     VideoState *is;
-
+    int ret;
     is = av_mallocz(sizeof(VideoState));
 
     if (argc < 2) {
         fprintf(stderr, "Usage: test <file>\n");
         exit(1);
     }
-    if (SDL_Init(SDL_INIT_VIDEO | SDL_INIT_AUDIO | SDL_INIT_TIMER)) {
+    ret = SDL_Init(SDL_INIT_VIDEO | SDL_INIT_AUDIO | SDL_INIT_TIMER);
+    if (ret < 0) {
         fprintf(stderr, "Could not initialize SDL - %s\n", SDL_GetError());
         exit(1);
     }
@@ -639,13 +625,25 @@ int main(int argc, char *argv[]) {
             1280,
             720,
             SDL_WINDOW_OPENGL);
+    if (window == NULL) {
+        fprintf(stderr, "Could not create window\n");
+        exit(1);
+    }
     renderer = SDL_CreateRenderer(window, -1, 0);
+    if (renderer == NULL) {
+        fprintf(stderr, "failed in create renderer");
+        exit(1);
+    }
     texture = SDL_CreateTexture(
             renderer,
             SDL_PIXELFORMAT_IYUV,
             SDL_TEXTUREACCESS_STREAMING,
             1280,
             720);
+    if (texture == NULL) {
+        fprintf(stderr, "failed in create texture");
+        exit(1);
+    }
     screen_mutex = SDL_CreateMutex();
     av_strlcpy(is->filename, argv[1], sizeof(is->filename));
 
