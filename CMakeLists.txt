@@ -220,4 +220,28 @@ ELSE()
     )
 ENDIF()
 
+add_executable(play_video play_video.cpp)
+IF(APPLE)
+    target_link_libraries(
+            play_video
+            avcodec
+            avutil
+            avformat
+            swresample
+            swscale
+            SDL2
+    )
+
+ELSE()
+    target_link_libraries(
+            play_video
+            avcodec
+            avutil
+            avformat
+            swresample
+            swscale
+            SDL2-2.0
+    )
+ENDIF()
+
 
