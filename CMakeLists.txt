@@ -233,6 +233,7 @@ IF(APPLE)
     )
 
 ELSE()
+    set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -std=c++11")
     target_link_libraries(
             play_video
             avcodec
@@ -241,6 +242,7 @@ ELSE()
             swresample
             swscale
             SDL2-2.0
+            pthread
     )
 ENDIF()
 
