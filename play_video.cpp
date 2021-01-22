@@ -11,6 +11,7 @@ extern "C" {
 #include <condition_variable>
 #include <mutex>
 #include <thread>
+#include <functional>
 
 using namespace std;
 
@@ -29,7 +30,9 @@ public:
         unique_lock<mutex> locker(conditionMutex);
         while (theList.empty() && block) {
             condition.wait(locker);
-            auto a = 1002;
+        }
+        if (theList.empty()) {
+            return nullptr;
         }
         auto last = theList.back();
         theList.pop_back();
@@ -40,6 +43,21 @@ public:
         unique_lock<mutex> locker(conditionMutex);
         theList.emplace_front(t);
         condition.notify_one();
+    }
+
+    void list_limit_push(T t, int max, function<int()> beforeWait, function<int()> afterWait) {
+        unique_lock<mutex> locker(conditionMutex);
+        auto first = true;
+        while (theList.size() >= max) {
+            if (first) {
+                beforeWait();
+                first = false;
+            }
+            condition.wait(locker);
+        }
+        theList.emplace_front(t);
+        if (!first)
+            afterWait();
     }
 };
 
@@ -59,6 +77,7 @@ public:
     AVCodecContext *audioCodecContext;
     AVCodec *audioCodec;
     SwrContext *resampleContext;
+    shared_ptr<thread> decodeVideoThread;
 
 };
 
@@ -83,6 +102,7 @@ int main(int argc, char **argv) {
     if (avformat_find_stream_info(formatContext, nullptr) < 0) {
         error_out("failed in find stream info");
     }
+    av_dump_format(formatContext, 0, argv[1], 0);
     auto videoInfo = new VideoInfo();
     thread demuxerThread([&formatContext, videoInfo]() -> void {
         int ret = -1;
@@ -114,11 +134,12 @@ int main(int argc, char **argv) {
                                 codecContext->sample_rate,
                                 1,
                                 nullptr);
+                        break;
                     case AVMEDIA_TYPE_VIDEO:
                         videoInfo->videoIndex = i;
                         videoInfo->audioCodec = codec;
                         videoInfo->videoCodecContext = codecContext;
-                        thread decodeVideo([](VideoInfo *videoInfo) -> void {
+                        videoInfo->decodeVideoThread = make_shared<thread>([](VideoInfo *videoInfo) -> void {
                             auto frame = av_frame_alloc();
                             while (true) {
                                 auto packet = videoInfo->videoPacketList.list_get();
@@ -147,7 +168,7 @@ int main(int argc, char **argv) {
             ret = av_read_frame(formatContext, packet);
             if (ret == AVERROR(EAGAIN) ||
                 ret == AVERROR_EOF) {
-                continue;
+                break;
             }
             if (ret < 0) {
                 error_out("failed in read packet");
@@ -156,8 +177,15 @@ int main(int argc, char **argv) {
             if (packet->stream_index == videoInfo->videoIndex) {
                 videoInfo->videoPacketList.list_push(packet);
             } else if (packet->stream_index == videoInfo->audioIndex) {
-                videoInfo->audioPacketList.list_push(packet);
+                videoInfo->audioPacketList.list_limit_push(packet, 100, [&formatContext]() -> int {
+                    cout<<"before wait"<<endl;
+                    return 0;
+                }, [&formatContext]() -> int {
+                    cout<<"after wait"<<endl;
+                    return 0;
+                });
             } else {
+                cerr << "" << endl;
                 av_packet_unref(packet);
             }
         }
@@ -177,6 +205,9 @@ int main(int argc, char **argv) {
         error_out("failed in open audio");
     }
     demuxerThread.join();
+//    thread save_picture([](VideoInfo *videoInfo) -> void {
+//
+//    }, videoInfo)
 }
 
 
