@@ -2,17 +2,19 @@ extern "C" {
 #include <libavformat/avformat.h>
 #include <libavcodec/avcodec.h>
 #include <libswresample/swresample.h>
+#include <libavutil/avutil.h>
 #include <SDL2/SDL.h>
 #include <SDL2/SDL_audio.h>
 }
 
 #include <iostream>
 #include <list>
-#include <condition_variable>
 #include <mutex>
 #include <thread>
 #include <functional>
+#include <condition_variable>
 
+#define MAX_AUDIO_FRAME_SIZE 192000
 using namespace std;
 
 
@@ -36,6 +38,7 @@ public:
         }
         auto last = theList.back();
         theList.pop_back();
+        condition.notify_one();
         return last;
     }
 
@@ -58,27 +61,31 @@ public:
         theList.emplace_front(t);
         if (!first)
             afterWait();
+        condition.notify_one();
     }
 };
 
 class VideoInfo {
 public:
     VideoInfo() {
-        videoIndex = 0;
-        audioIndex = 0;
+        videoIndex = -1;
+        audioIndex = -1;
     };
     List<AVPacket *> videoPacketList;
-    List<AVPacket *> audioPacketList;
+
     int videoIndex;
     AVCodecContext *videoCodecContext;
     AVCodec *videoCodec;
     List<AVFrame *> videoFrameList;
+    shared_ptr<thread> decodeVideoThread;
+
     int audioIndex;
     AVCodecContext *audioCodecContext;
     AVCodec *audioCodec;
     SwrContext *resampleContext;
-    shared_ptr<thread> decodeVideoThread;
-
+    List<AVPacket *> audioPacketList;
+    List<AVFrame *> audioFrameList;
+    shared_ptr<thread> decodeAudioThread;
 };
 
 void error_out(string msg) {
@@ -86,11 +93,71 @@ void error_out(string msg) {
     exit(1);
 }
 
+//void audio_callback(void *userdata, Uint8 *stream, int len) {
+//    auto videoInfo = static_cast<VideoInfo *>(userdata);
+//    cout<<"callback len: "<<len<<endl;
+//    auto frame = videoInfo->audioFrameList.list_get();
+//    if(frame!= nullptr){
+//        int convert_ret = swr_convert(videoInfo->resampleContext,
+//                                      &stream,
+//                                      frame->nb_samples,
+//                                      (const uint8_t **) frame->data,
+//                                      frame->nb_samples);
+//        av_frame_unref(frame);
+//        av_frame_free(&frame);
+//        if(convert_ret<0){
+//            cerr<<"failed in convert audio: "<<av_err2str(convert_ret)<<endl;
+//        }
+//    }
+//}
+
+int audio_decode_frame(VideoInfo *videoInfo, uint8_t *audio_buf, int buf_size) {
+    static int ret = -1;
+    auto frame = *videoInfo->audioFrameList.list_get();
+    auto data_size = av_samples_get_buffer_size(nullptr, frame.channels, frame.nb_samples,
+                                                videoInfo->audioCodecContext->sample_fmt, 0);
+    int convert_ret = swr_convert(videoInfo->resampleContext,
+                                  &audio_buf,
+                                  frame.nb_samples,
+                                  (const uint8_t **) frame.data,
+                                  frame.nb_samples);
+    if (convert_ret >= 0) {
+        return data_size;
+    }
+    return 0;
+}
+
 void audio_callback(void *userdata, Uint8 *stream, int len) {
     auto videoInfo = static_cast<VideoInfo *>(userdata);
-    while (true) {
-        auto packet = videoInfo->audioPacketList.list_get();
-    };
+    cout << "callback len: " << len << endl;
+    int len1, audio_size;
+
+    static uint8_t audio_buf[(MAX_AUDIO_FRAME_SIZE * 3) / 2];
+    static unsigned int audio_buf_size = 0;
+    static unsigned int audio_buf_index = 0;
+
+    while (len > 0) {
+        if (audio_buf_index >= audio_buf_size) {
+            /* We have already sent all our data; get more */
+            audio_size = audio_decode_frame(videoInfo, audio_buf, sizeof(audio_buf));
+            if (audio_size < 0) {
+                /* If error, output silence */
+                audio_buf_size = 1024; // arbitrary?
+                memset(audio_buf, 0, audio_buf_size);
+            } else {
+                audio_buf_size = audio_size;
+            }
+            audio_buf_index = 0;
+        }
+        len1 = audio_buf_size - audio_buf_index;
+        if (len1 > len)
+            len1 = len;
+        memcpy(stream, (uint8_t *) audio_buf + audio_buf_index, len1);
+        cout << "memcpy: " << len1 << endl;
+        len -= len1;
+        stream += len1;
+        audio_buf_index += len1;
+    }
 }
 
 int main(int argc, char **argv) {
@@ -121,6 +188,8 @@ int main(int argc, char **argv) {
                 }
                 switch (codecPar->codec_type) {
                     case AVMEDIA_TYPE_AUDIO:
+                        if (videoInfo->audioIndex != -1 || i != 2)
+                            continue;
                         videoInfo->audioIndex = i;
                         videoInfo->audioCodec = codec;
                         videoInfo->audioCodecContext = codecContext;
@@ -128,43 +197,83 @@ int main(int argc, char **argv) {
                                 nullptr,
                                 codecContext->channel_layout,
                                 AV_SAMPLE_FMT_FLT,
-                                44100,
+                                codecContext->sample_rate,
                                 codecContext->channel_layout,
                                 codecContext->sample_fmt,
                                 codecContext->sample_rate,
                                 1,
                                 nullptr);
-                        break;
-                    case AVMEDIA_TYPE_VIDEO:
-                        videoInfo->videoIndex = i;
-                        videoInfo->audioCodec = codec;
-                        videoInfo->videoCodecContext = codecContext;
-                        videoInfo->decodeVideoThread = make_shared<thread>([](VideoInfo *videoInfo) -> void {
-                            auto frame = av_frame_alloc();
+                        if (swr_init(videoInfo->resampleContext) < 0) {
+                            error_out("failed in init swr");
+                        }
+                        videoInfo->decodeAudioThread = make_shared<thread>([](VideoInfo *videoInfo) -> void {
                             while (true) {
-                                auto packet = videoInfo->videoPacketList.list_get();
+                                auto packet = videoInfo->audioPacketList.list_get();
                                 if (packet == nullptr) {
                                     break;
                                 }
-                                avcodec_send_packet(videoInfo->videoCodecContext, packet);
+                                avcodec_send_packet(videoInfo->audioCodecContext, packet);
                                 int ret;
                                 do {
-                                    ret = avcodec_receive_frame(videoInfo->videoCodecContext, frame);
-                                    if (ret == AVERROR_EOF || AVERROR(EAGAIN) == ret) {
+                                    auto frame = av_frame_alloc();
+                                    ret = avcodec_receive_frame(videoInfo->audioCodecContext, frame);
+                                    if (ret == AVERROR_EOF ||
+                                        AVERROR(EAGAIN) == ret) {
                                         break;
                                     }
                                     if (ret < 0) {
-                                        error_out("decode video:failed in receive frame");
+                                        error_out("decode audio:failed in receive frame");
                                     }
-                                    videoInfo->videoFrameList.list_push(frame);
+                                    videoInfo->audioFrameList.list_limit_push(frame, 10, []() -> int {
+                                        cout << "audio frame is full, before wait" << endl;
+                                        return 0;
+                                    }, []() -> int {
+                                        cout << "audio frame is full, after wait" << endl;
+                                        return 0;
+                                    });
                                 } while (ret == 0);
                             }
                         }, videoInfo);
+                        break;
+                    case AVMEDIA_TYPE_VIDEO:
+                        if (videoInfo->videoIndex != -1)
+                            continue;
+                        videoInfo->videoIndex = i;
+                        videoInfo->audioCodec = codec;
+                        videoInfo->videoCodecContext = codecContext;
+                        if (videoInfo->decodeVideoThread == nullptr) {
+                            videoInfo->decodeVideoThread = make_shared<thread>([](VideoInfo *videoInfo) -> void {
+                                while (true) {
+                                    auto packet = videoInfo->videoPacketList.list_get();
+                                    if (packet == nullptr) {
+                                        break;
+                                    }
+                                    avcodec_send_packet(videoInfo->videoCodecContext, packet);
+                                    int ret;
+                                    do {
+                                        auto frame = av_frame_alloc();
+                                        ret = avcodec_receive_frame(videoInfo->videoCodecContext, frame);
+                                        if (ret == AVERROR_EOF || AVERROR(EAGAIN) == ret) {
+                                            break;
+                                        }
+                                        if (ret < 0) {
+                                            error_out("decode video:failed in receive frame");
+                                        }
+//                                        videoInfo->videoFrameList.list_limit_push(frame,10,[]()->int{
+//                                            return 0;
+//                                        },[]()->int{
+//                                            return 0;
+//                                        });
+                                    } while (ret == 0);
+                                }
+                                cerr << "video decode thread exit" << endl;
+                            }, videoInfo);
+                        }
                 }
             }
         }
-        auto packet = av_packet_alloc();
         while (true) {
+            auto packet = av_packet_alloc();
             ret = av_read_frame(formatContext, packet);
             if (ret == AVERROR(EAGAIN) ||
                 ret == AVERROR_EOF) {
@@ -175,15 +284,23 @@ int main(int argc, char **argv) {
                 return;
             }
             if (packet->stream_index == videoInfo->videoIndex) {
-                videoInfo->videoPacketList.list_push(packet);
-            } else if (packet->stream_index == videoInfo->audioIndex) {
-                videoInfo->audioPacketList.list_limit_push(packet, 100, [&formatContext]() -> int {
-                    cout<<"before wait"<<endl;
+                videoInfo->videoPacketList.list_limit_push(packet, 100, []() -> int {
+                    cout << "video before wait" << endl;
                     return 0;
-                }, [&formatContext]() -> int {
-                    cout<<"after wait"<<endl;
+                }, []() -> int {
+                    cout << "video after wait" << endl;
                     return 0;
                 });
+                cout << "" << endl;
+            } else if (packet->stream_index == videoInfo->audioIndex) {
+                videoInfo->audioPacketList.list_limit_push(packet, 100, []() -> int {
+                    cout << "audio before wait" << endl;
+                    return 0;
+                }, []() -> int {
+                    cout << "audio after wait" << endl;
+                    return 0;
+                });
+                cout << "after push audio packet" << endl;
             } else {
                 cerr << "" << endl;
                 av_packet_unref(packet);
@@ -194,20 +311,19 @@ int main(int argc, char **argv) {
         error_out("failed in init sdl");
     }
     SDL_AudioSpec wantSpec, gotSpec;
-    wantSpec.channels = 2;
-    wantSpec.freq = 44100;
+    wantSpec.freq = 48000;
     wantSpec.format = AUDIO_F32;
+    wantSpec.channels = 2;
     wantSpec.silence = 0;
-    wantSpec.size = 1024;
-    wantSpec.userdata = &videoInfo;
+    wantSpec.samples = 4096;
+
+    wantSpec.userdata = videoInfo;
     wantSpec.callback = audio_callback;
     if (SDL_OpenAudio(&wantSpec, &gotSpec) == -1) {
         error_out("failed in open audio");
     }
+    SDL_PauseAudio(0);
     demuxerThread.join();
-//    thread save_picture([](VideoInfo *videoInfo) -> void {
-//
-//    }, videoInfo)
 }
 
 
