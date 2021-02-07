@@ -188,7 +188,7 @@ int main(int argc, char **argv) {
                 }
                 switch (codecPar->codec_type) {
                     case AVMEDIA_TYPE_AUDIO:
-                        if (videoInfo->audioIndex != -1 || i != 2)
+                        if (videoInfo->audioIndex != -1)
                             continue;
                         videoInfo->audioIndex = i;
                         videoInfo->audioCodec = codec;
