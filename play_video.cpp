@@ -73,6 +73,7 @@ public:
     VideoInfo() {
         videoIndex = -1;
         audioIndex = -1;
+        quit = false;
     };
     List<AVPacket *> videoPacketList;
 
@@ -94,6 +95,7 @@ public:
     List<AVPacket *> audioPacketList;
     List<AVFrame *> audioFrameList;
     shared_ptr<thread> decodeAudioThread;
+    bool quit;
 };
 
 void error_out(string msg) {
@@ -198,9 +200,10 @@ void VideoRefreshTimer(void *data) {
     auto videoInfo = static_cast<VideoInfo *>(data);
     if (videoInfo->videoCodecContext != nullptr) {
         if (!videoInfo->videoFrameList.empty()) {
+            scheduleRefresh(videoInfo, 40);
             showFrame(videoInfo);
         } else {
-            scheduleRefresh(videoInfo, 1);
+            scheduleRefresh(videoInfo, 10);
         }
     } else {
         scheduleRefresh(videoInfo, 100);
@@ -208,7 +211,7 @@ void VideoRefreshTimer(void *data) {
 }
 
 void decodeVideo(VideoInfo *videoInfo) {
-    while (true) {
+    while (!videoInfo->quit) {
         auto packet = videoInfo->videoPacketList.list_get();
         if (packet == nullptr) {
             break;
@@ -224,10 +227,10 @@ void decodeVideo(VideoInfo *videoInfo) {
             if (ret < 0) {
                 error_out("decode video:failed in receive frame");
             }
-            videoInfo->videoFrameList.list_limit_push(frame, 10, []() -> int {
-                return 0;
+            videoInfo->videoFrameList.list_limit_push(frame, 100, []() -> int {
+                cout << "video frame is full, before wait" << endl;
             }, []() -> int {
-                return 0;
+                cout << "video frame is full, after wait" << endl;
             });
         } while (ret == 0);
     }
@@ -235,7 +238,7 @@ void decodeVideo(VideoInfo *videoInfo) {
 }
 
 void decodeAudio(VideoInfo *videoInfo) {
-    while (true) {
+    while (!videoInfo->quit) {
         auto packet = videoInfo->audioPacketList.list_get();
         if (packet == nullptr) {
             break;
@@ -252,7 +255,7 @@ void decodeAudio(VideoInfo *videoInfo) {
             if (ret < 0) {
                 error_out("decode audio:failed in receive frame");
             }
-            videoInfo->audioFrameList.list_limit_push(frame, 10, []() -> int {
+            videoInfo->audioFrameList.list_limit_push(frame, 1000, []() -> int {
                 cout << "audio frame is full, before wait" << endl;
                 return 0;
             }, []() -> int {
@@ -343,7 +346,7 @@ void demuxerFunction(AVFormatContext *formatContext, VideoInfo *videoInfo) {
             }
         }
     }
-    while (true) {
+    while (!videoInfo->quit) {
         auto packet = av_packet_alloc();
         ret = av_read_frame(formatContext, packet);
         if (ret == AVERROR(EAGAIN) ||
@@ -362,7 +365,7 @@ void demuxerFunction(AVFormatContext *formatContext, VideoInfo *videoInfo) {
                 cout << "video after wait" << endl;
                 return 0;
             });
-            cout << "" << endl;
+            cout << "after push video packet" << endl;
         } else if (packet->stream_index == videoInfo->audioIndex) {
             videoInfo->audioPacketList.list_limit_push(packet, 100, []() -> int {
                 cout << "audio before wait" << endl;
@@ -434,6 +437,7 @@ int main(int argc, char **argv) {
                 break;
             case FF_QUIT_EVENT:
             case SDL_QUIT:
+                videoInfo->quit = true;
                 SDL_Quit();
                 return 0;
                 break;
