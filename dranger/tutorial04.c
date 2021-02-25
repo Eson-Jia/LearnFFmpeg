@@ -498,7 +498,7 @@ int stream_component_open(VideoState *is, int stream_index) {
             is->video_st = pFormatCtx->streams[stream_index];
             is->video_ctx = codecCtx;
             packet_queue_init(&is->videoq);
-            is->video_tid = SDL_CreateThread(video_thread, "", is);
+            is->video_tid = SDL_CreateThread(video_thread, "video_thread", is);
             is->sws_ctx = sws_getContext(is->video_ctx->width, is->video_ctx->height,
                                          is->video_ctx->pix_fmt, is->video_ctx->width,
                                          is->video_ctx->height, AV_PIX_FMT_YUV420P,
@@ -657,7 +657,7 @@ int main(int argc, char *argv[]) {
 
     schedule_refresh(is, 40);
 
-    is->parse_tid = SDL_CreateThread(decode_thread, NULL, is);
+    is->parse_tid = SDL_CreateThread(decode_thread, "decode_thread", is);
     if (!is->parse_tid) {
         av_free(is);
         return -1;
