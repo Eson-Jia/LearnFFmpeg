@@ -450,12 +450,17 @@ int stream_component_open(VideoState *is, int stream_index) {
 
     if (codecCtx->codec_type == AVMEDIA_TYPE_AUDIO) {
         is->convert_ctx = swr_alloc();
-        av_opt_set_int(is->convert_ctx, "in_channel_layout", codecCtx->channel_layout, 0);
-        av_opt_set_int(is->convert_ctx, "out_channel_layout", codecCtx->channel_layout, 0);
-        av_opt_set_int(is->convert_ctx, "in_sample_rate", codecCtx->sample_rate, 0);
-        av_opt_set_int(is->convert_ctx, "out_sample_rate", codecCtx->sample_rate, 0);
-        av_opt_set_sample_fmt(is->convert_ctx, "in_sample_fmt", AV_SAMPLE_FMT_FLTP, 0);
-        av_opt_set_sample_fmt(is->convert_ctx, "out_sample_fmt", AV_SAMPLE_FMT_FLT, 0);
+        is->convert_ctx = swr_alloc_set_opts(
+                NULL,
+                codecCtx->channel_layout,
+                AV_SAMPLE_FMT_FLT,
+                codecCtx->sample_rate,
+                codecCtx->channel_layout,
+                codecCtx->sample_fmt,
+                codecCtx->sample_rate,
+                0,
+                NULL
+        );
         swr_init(is->convert_ctx);
 
         // Set audio settings from codec info
