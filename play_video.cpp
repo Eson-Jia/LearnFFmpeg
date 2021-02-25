@@ -15,12 +15,12 @@ extern "C" {
 #include <thread>
 #include <functional>
 #include <condition_variable>
+#include <chrono>
 
 #define MAX_AUDIO_FRAME_SIZE 192000
 #define FF_REFRESH_EVENT (SDL_USEREVENT)
 #define  FF_QUIT_EVENT SDL_USEREVENT+1
 using namespace std;
-
 
 template<class T>
 class List {
@@ -152,11 +152,17 @@ void audio_callback(void *userdata, Uint8 *stream, int len) {
     }
 }
 
+// SDL_AddTimer 的回调函数的传入参数是调用 SDL_AddTimer 时的参数:timer interval,用户定义的参数,返回值是下一个 timer interval.
+// 如果返回值是 0 的话,这个 timer 就会被取消.
+// 回调函数运行在一个单独的线程.
+// Timer 回调函数的执行执行也会被计入下次迭代的总时间中,例如:如果回调函数执行了`250ms`然后返回了 1000(ms),那么 timer 在下一次迭代之前只会再等 750(ms).
+// 参考 https://wiki.libsdl.org/SDL_AddTimer
 Uint32 freshTimerCallback(Uint32 interval, void *opaque) {
     SDL_Event event;
     event.type = FF_REFRESH_EVENT;
     event.user.data1 = opaque;
     SDL_PushEvent(&event);
+    return 0;
 };
 
 void scheduleRefresh(VideoInfo *videoInfo, int delay) {
@@ -178,7 +184,7 @@ void showFrame(VideoInfo *videoInfo) {
     SDL_RenderPresent(videoInfo->renderer);
 }
 
-void VideoRefreshTimer(void *data) {
+void videoRefreshTimer(void *data) {
     auto videoInfo = static_cast<VideoInfo *>(data);
     if (videoInfo->videoCodecContext != nullptr) {
         if (!videoInfo->videoFrameList.empty()) {
@@ -237,7 +243,7 @@ void decodeAudio(VideoInfo *videoInfo) {
             if (ret < 0) {
                 error_out("decode audio:failed in receive frame");
             }
-            videoInfo->audioFrameList.list_limit_push(frame, 1000, []() -> int {
+            videoInfo->audioFrameList.list_limit_push(frame, 100, []() -> int {
                 cout << "audio frame is full, before wait" << endl;
                 return 0;
             }, []() -> int {
@@ -331,9 +337,12 @@ void demuxerFunction(AVFormatContext *formatContext, VideoInfo *videoInfo) {
     while (!videoInfo->quit) {
         auto packet = av_packet_alloc();
         ret = av_read_frame(formatContext, packet);
-        if (ret == AVERROR(EAGAIN) ||
-            ret == AVERROR_EOF) {
+        if (ret == AVERROR(EAGAIN)) {
+            SDL_Delay(10);
             break;
+        }
+        if (ret == AVERROR_EOF) {
+
         }
         if (ret < 0) {
             error_out("failed in read packet");
@@ -415,7 +424,7 @@ int main(int argc, char **argv) {
         }
         switch (event.type) {
             case FF_REFRESH_EVENT:
-                VideoRefreshTimer(event.user.data1);
+                videoRefreshTimer(event.user.data1);
                 break;
             case FF_QUIT_EVENT:
             case SDL_QUIT:
@@ -426,22 +435,6 @@ int main(int argc, char **argv) {
         }
     }
     demuxerThread.join();
+    videoInfo->decodeVideoThread->join();
+    videoInfo->decodeAudioThread->join();
 }
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
