@@ -103,24 +103,6 @@ void error_out(string msg) {
     exit(1);
 }
 
-//void audio_callback(void *userdata, Uint8 *stream, int len) {
-//    auto videoInfo = static_cast<VideoInfo *>(userdata);
-//    cout<<"callback len: "<<len<<endl;
-//    auto frame = videoInfo->audioFrameList.list_get();
-//    if(frame!= nullptr){
-//        int convert_ret = swr_convert(videoInfo->resampleContext,
-//                                      &stream,
-//                                      frame->nb_samples,
-//                                      (const uint8_t **) frame->data,
-//                                      frame->nb_samples);
-//        av_frame_unref(frame);
-//        av_frame_free(&frame);
-//        if(convert_ret<0){
-//            cerr<<"failed in convert audio: "<<av_err2str(convert_ret)<<endl;
-//        }
-//    }
-//}
-
 int audio_decode_frame(VideoInfo *videoInfo, uint8_t *audio_buf, int buf_size) {
     static int ret = -1;
     auto frame = *videoInfo->audioFrameList.list_get();
