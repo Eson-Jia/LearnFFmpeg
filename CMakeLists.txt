@@ -246,4 +246,10 @@ ELSE()
     )
 ENDIF()
 
+add_executable(sdl_timer sdl_timer.cpp)
+
+target_link_libraries(
+        sdl_timer
+        SDL2-2.0
+        )
 
