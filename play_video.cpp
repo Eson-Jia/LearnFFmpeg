@@ -105,14 +105,16 @@ void error_out(string msg) {
 
 int audio_decode_frame(VideoInfo *videoInfo, uint8_t *audio_buf, int buf_size) {
     static int ret = -1;
-    auto frame = *videoInfo->audioFrameList.list_get();
-    auto data_size = av_samples_get_buffer_size(nullptr, frame.channels, frame.nb_samples,
+    auto frame = videoInfo->audioFrameList.list_get();
+    auto data_size = av_samples_get_buffer_size(nullptr, frame->channels, frame->nb_samples,
                                                 videoInfo->audioCodecContext->sample_fmt, 0);
     int convert_ret = swr_convert(videoInfo->resampleContext,
                                   &audio_buf,
-                                  frame.nb_samples,
-                                  (const uint8_t **) frame.data,
-                                  frame.nb_samples);
+                                  frame->nb_samples,
+                                  (const uint8_t **) frame->data,
+                                  frame->nb_samples);
+//    av_frame_unref(frame); no need
+    av_frame_free(&frame);
     if (convert_ret >= 0) {
         return data_size;
     }
@@ -182,6 +184,8 @@ void showFrame(VideoInfo *videoInfo) {
     SDL_RenderClear(videoInfo->renderer);
     SDL_RenderCopy(videoInfo->renderer, videoInfo->texture, nullptr, nullptr);
     SDL_RenderPresent(videoInfo->renderer);
+    av_frame_unref(frame);
+    av_frame_free(&frame);
 }
 
 void videoRefreshTimer(void *data) {
@@ -221,6 +225,7 @@ void decodeVideo(VideoInfo *videoInfo) {
                 cout << "video frame is full, after wait" << endl;
             });
         } while (ret == 0);
+        av_packet_free(&packet);
     }
     cerr << "video decode thread exit" << endl;
 }
@@ -251,8 +256,8 @@ void decodeAudio(VideoInfo *videoInfo) {
                 return 0;
             });
         } while (ret == 0);
+        av_packet_free(&packet);
     }
-
 }
 
 void demuxerFunction(AVFormatContext *formatContext, VideoInfo *videoInfo) {
@@ -337,12 +342,10 @@ void demuxerFunction(AVFormatContext *formatContext, VideoInfo *videoInfo) {
     while (!videoInfo->quit) {
         auto packet = av_packet_alloc();
         ret = av_read_frame(formatContext, packet);
-        if (ret == AVERROR(EAGAIN)) {
+        if (ret == AVERROR(EAGAIN) ||
+            ret == AVERROR_EOF) {
             SDL_Delay(10);
             break;
-        }
-        if (ret == AVERROR_EOF) {
-
         }
         if (ret < 0) {
             error_out("failed in read packet");
@@ -356,7 +359,7 @@ void demuxerFunction(AVFormatContext *formatContext, VideoInfo *videoInfo) {
                 cout << "video after wait" << endl;
                 return 0;
             });
-            cout << "after push video packet" << endl;
+//            cout << "after push video packet" << endl;
         } else if (packet->stream_index == videoInfo->audioIndex) {
             videoInfo->audioPacketList.list_limit_push(packet, 100, []() -> int {
                 cout << "audio before wait" << endl;
@@ -365,10 +368,13 @@ void demuxerFunction(AVFormatContext *formatContext, VideoInfo *videoInfo) {
                 cout << "audio after wait" << endl;
                 return 0;
             });
-            cout << "after push audio packet" << endl;
+//            cout << "after push audio packet" << endl;
         } else {
             cerr << "" << endl;
-            av_packet_unref(packet);
+            // 解引用被 packet 引用的 buffer,并将成员变量重置为默认值
+            // av_packet_unref(packet);
+            // 释放 packet 内存,如果 packet 还在被引用计数的话,就先解引用,所以如果要调用 free 那么在其之前就没有必要调用 av_packet_unref
+            av_packet_free(&packet);
         }
     }
 }
