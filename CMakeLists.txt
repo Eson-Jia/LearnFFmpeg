@@ -229,6 +229,7 @@ IF(APPLE)
             avformat
             swresample
             swscale
+            avfilter
             SDL2
     )
 
@@ -241,6 +242,7 @@ ELSE()
             avformat
             swresample
             swscale
+            avfilter
             SDL2-2.0
             pthread
     )

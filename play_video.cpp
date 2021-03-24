@@ -7,6 +7,9 @@ extern "C" {
 #include <SDL2/SDL_audio.h>
 #include <libswscale/swscale.h>
 #include <libavutil/imgutils.h>
+#include <libavfilter/avfilter.h>
+#include <libavfilter/buffersrc.h>
+#include <libavfilter/buffersink.h>
 }
 
 #include <iostream>
@@ -75,6 +78,7 @@ public:
         audioIndex = -1;
         quit = false;
     };
+    AVFormatContext *formatContext;
     List<AVPacket *> videoPacketList;
 
     int videoIndex;
@@ -87,6 +91,11 @@ public:
     uint8_t *YUVOutBuffer;
     SDL_Renderer *renderer;
     SDL_Texture *texture;
+
+    //filter
+    AVFilterContext *bufferSrcFilterCtx;
+    AVFilterContext *bufferSinkFilterCtx;
+    string filterDescription;
 
     int audioIndex;
     AVCodecContext *audioCodecContext;
@@ -101,6 +110,48 @@ public:
 void error_out(string msg) {
     cerr << msg << endl;
     exit(1);
+}
+
+int init_filter(VideoInfo *videoInfo) {
+    const AVFilter *bufferFilter = avfilter_get_by_name("buffer");
+    const AVFilter *bufferSinkFilter = avfilter_get_by_name("buffersink");
+    AVFilterInOut *inputs = avfilter_inout_alloc();
+    AVFilterInOut *outputs = avfilter_inout_alloc();
+    auto graph = avfilter_graph_alloc();
+    AVRational videoTimeBase = videoInfo->formatContext->streams[videoInfo->videoIndex]->time_base;
+    char args[512];
+    snprintf(args, 512, "video_size=%dx%d:pix_fmt=%d:time_base=%d/%d:pixel_aspect=%d/%d",
+             videoInfo->videoCodecContext->width,
+             videoInfo->videoCodecContext->height,
+             AV_PIX_FMT_YUV420P,
+             videoTimeBase.num,
+             videoTimeBase.den,
+             videoInfo->videoCodecContext->sample_aspect_ratio.num,
+             videoInfo->videoCodecContext->sample_aspect_ratio.den);
+    avfilter_graph_create_filter(&videoInfo->bufferSrcFilterCtx, bufferFilter, "in", args, nullptr, graph);
+    avfilter_graph_create_filter(&videoInfo->bufferSinkFilterCtx, bufferSinkFilter, "out", "", nullptr, graph);
+
+    outputs->filter_ctx = videoInfo->bufferSrcFilterCtx;
+    outputs->name = av_strdup("in");
+    outputs->next = nullptr;
+    outputs->pad_idx = 0;
+
+    inputs->filter_ctx = videoInfo->bufferSinkFilterCtx;
+    inputs->name = av_strdup("out");
+    outputs->next = nullptr;
+    outputs->pad_idx = 0;
+
+    auto ret = avfilter_graph_parse_ptr(graph, videoInfo->filterDescription.c_str(), &inputs, &outputs, nullptr);
+    if (ret < 0) {
+        goto end;
+    }
+    ret = avfilter_graph_config(graph, nullptr);
+    if (ret < 0)
+        goto end;
+    end:
+    avfilter_inout_free(&inputs);
+    avfilter_inout_free(&outputs);
+    return ret;
 }
 
 int audio_decode_frame(VideoInfo *videoInfo, uint8_t *audio_buf, int buf_size) {
@@ -210,20 +261,35 @@ void decodeVideo(VideoInfo *videoInfo) {
         }
         avcodec_send_packet(videoInfo->videoCodecContext, packet);
         int ret;
+        AVFrame frame;
         do {
-            auto frame = av_frame_alloc();
-            ret = avcodec_receive_frame(videoInfo->videoCodecContext, frame);
+            ret = avcodec_receive_frame(videoInfo->videoCodecContext, &frame);
             if (ret == AVERROR_EOF || AVERROR(EAGAIN) == ret) {
                 break;
             }
             if (ret < 0) {
                 error_out("decode video:failed in receive frame");
             }
-            videoInfo->videoFrameList.list_limit_push(frame, 100, []() -> int {
-                cout << "video frame is full, before wait" << endl;
-            }, []() -> int {
-                cout << "video frame is full, after wait" << endl;
-            });
+            ret = av_buffersrc_add_frame_flags(videoInfo->bufferSrcFilterCtx, &frame, AV_BUFFERSRC_FLAG_KEEP_REF);
+            if (ret < 0) {
+                error_out("failed in buffersrc add frame");
+            }
+            do {
+                auto afterFrame = av_frame_alloc();
+                ret = av_buffersink_get_frame(videoInfo->bufferSinkFilterCtx, afterFrame);
+                if (AVERROR(EAGAIN) == ret || AVERROR_EOF == ret) {
+                    av_frame_free(&afterFrame);
+                    break;
+                }
+                if (ret < 0) {
+                    error_out("failed iin buffer sink get frame");
+                }
+                videoInfo->videoFrameList.list_limit_push(afterFrame, 100, []() -> int {
+                    cout << "video frame is full, before wait" << endl;
+                }, []() -> int {
+                    cout << "video frame is full, after wait" << endl;
+                });
+            } while (ret == 0);
         } while (ret == 0);
         av_packet_free(&packet);
     }
@@ -335,6 +401,7 @@ void demuxerFunction(AVFormatContext *formatContext, VideoInfo *videoInfo) {
                             1) < 0) {
                         error_out("failed in fill arrays");
                     }
+                    init_filter(videoInfo);
 
             }
         }
@@ -381,6 +448,9 @@ void demuxerFunction(AVFormatContext *formatContext, VideoInfo *videoInfo) {
 
 int main(int argc, char **argv) {
     AVFormatContext *formatContext = nullptr;
+    if (argc < 3) {
+        error_out("malformed parameter");
+    }
     auto ret = avformat_open_input(&formatContext, argv[1], nullptr, nullptr);
     if (ret < 0) {
         error_out("failed in open input");
@@ -390,6 +460,8 @@ int main(int argc, char **argv) {
     }
     av_dump_format(formatContext, 0, argv[1], 0);
     auto videoInfo = new VideoInfo();
+    videoInfo->filterDescription = string(argv[2]);
+    videoInfo->formatContext = formatContext;
     thread demuxerThread(demuxerFunction, formatContext, videoInfo);
     if (SDL_Init(SDL_INIT_AUDIO | SDL_INIT_EVENTS | SDL_INIT_VIDEO | SDL_INIT_TIMER) < 0) {
         error_out("failed in init sdl");

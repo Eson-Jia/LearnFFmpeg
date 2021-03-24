@@ -18,3 +18,11 @@ FFmpeg 学习工程
 ffmpeg -i input.mp4 -vcodec copy output.h264
 ```
 `decode_video output.h264 frame_name` 可以将文件解码成图片
+
+### play_video
+
+添加 filter 功能,从启动参数获取 filter description 并设置到播放器,运行命令格式为:
+
+```bash
+play_video input filter_description
+```
