@@ -184,7 +184,7 @@ void showFrame(VideoInfo *videoInfo) {
     SDL_RenderClear(videoInfo->renderer);
     SDL_RenderCopy(videoInfo->renderer, videoInfo->texture, nullptr, nullptr);
     SDL_RenderPresent(videoInfo->renderer);
-    av_frame_unref(frame);
+//    av_frame_unref(frame); 不需要再调用这句话
     av_frame_free(&frame);
 }
 
