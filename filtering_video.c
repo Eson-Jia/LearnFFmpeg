@@ -122,6 +122,11 @@ static int init_filters(const char *filters_descr) {
      * Set the endpoints for the filter graph. The filter_graph will
      * be linked to the graph described by filters_descr.
      */
+
+    /**
+     * buffer source --output--> <--input(in)-- first filter...last filter --output(out)-->  <--input-- buffer sink
+     */
+
     /*
      * The buffer source output must be connected to the input pad of
      * the first filter described by filters_descr; since the first
