@@ -28,8 +28,8 @@
  */
 #include <libavutil/timestamp.h>
 #include <libavformat/avformat.h>
-static void log_packet(const AVFormatContext *fmt_ctx, const AVPacket *pkt, const char *tag)
-{
+
+static void log_packet(const AVFormatContext *fmt_ctx, const AVPacket *pkt, const char *tag) {
     AVRational *time_base = &fmt_ctx->streams[pkt->stream_index]->time_base;
     printf("%s: pts:%s pts_time:%s dts:%s dts_time:%s duration:%s duration_time:%s stream_index:%d\n",
            tag,
@@ -38,12 +38,13 @@ static void log_packet(const AVFormatContext *fmt_ctx, const AVPacket *pkt, cons
            av_ts2str(pkt->duration), av_ts2timestr(pkt->duration, time_base),
            pkt->stream_index);
 }
-int main(int argc, char **argv)
-{
+
+int main(int argc, char **argv) {
     AVOutputFormat *ofmt = NULL;
     AVFormatContext *ifmt_ctx = NULL, *ofmt_ctx = NULL;
     AVPacket pkt;
     const char *in_filename, *out_filename;
+    AVDictionary *dict = NULL;
     int ret, i;
     int stream_index = 0;
     int *stream_mapping = NULL;
@@ -55,7 +56,7 @@ int main(int argc, char **argv)
                "\n", argv[0]);
         return 1;
     }
-    in_filename  = argv[1];
+    in_filename = argv[1];
     out_filename = argv[2];
     if ((ret = avformat_open_input(&ifmt_ctx, in_filename, 0, 0)) < 0) {
         fprintf(stderr, "Could not open input file '%s'", in_filename);
@@ -66,7 +67,7 @@ int main(int argc, char **argv)
         goto end;
     }
     av_dump_format(ifmt_ctx, 0, in_filename, 0);
-    avformat_alloc_output_context2(&ofmt_ctx, NULL, NULL, out_filename);
+    avformat_alloc_output_context2(&ofmt_ctx, NULL, "rtsp", out_filename);
     if (!ofmt_ctx) {
         fprintf(stderr, "Could not create output context\n");
         ret = AVERROR_UNKNOWN;
@@ -111,7 +112,9 @@ int main(int argc, char **argv)
             goto end;
         }
     }
-    ret = avformat_write_header(ofmt_ctx, NULL);
+    av_dict_set(&dict, "rtsp_transport", "tcp", 0);
+    av_dict_set(&dict, "muxdelay", "0.1", 0);
+    ret = avformat_write_header(ofmt_ctx, &dict);
     if (ret < 0) {
         fprintf(stderr, "Error occurred when opening output file\n");
         goto end;
@@ -121,7 +124,7 @@ int main(int argc, char **argv)
         ret = av_read_frame(ifmt_ctx, &pkt);
         if (ret < 0)
             break;
-        in_stream  = ifmt_ctx->streams[pkt.stream_index];
+        in_stream = ifmt_ctx->streams[pkt.stream_index];
         if (pkt.stream_index >= stream_mapping_size ||
             stream_mapping[pkt.stream_index] < 0) {
             av_packet_unref(&pkt);
@@ -131,8 +134,10 @@ int main(int argc, char **argv)
         out_stream = ofmt_ctx->streams[pkt.stream_index];
         log_packet(ifmt_ctx, &pkt, "in");
         /* copy packet */
-        pkt.pts = av_rescale_q_rnd(pkt.pts, in_stream->time_base, out_stream->time_base, AV_ROUND_NEAR_INF|AV_ROUND_PASS_MINMAX);
-        pkt.dts = av_rescale_q_rnd(pkt.dts, in_stream->time_base, out_stream->time_base, AV_ROUND_NEAR_INF|AV_ROUND_PASS_MINMAX);
+        pkt.pts = av_rescale_q_rnd(pkt.pts, in_stream->time_base, out_stream->time_base,
+                                   AV_ROUND_NEAR_INF | AV_ROUND_PASS_MINMAX);
+        pkt.dts = av_rescale_q_rnd(pkt.dts, in_stream->time_base, out_stream->time_base,
+                                   AV_ROUND_NEAR_INF | AV_ROUND_PASS_MINMAX);
         pkt.duration = av_rescale_q(pkt.duration, in_stream->time_base, out_stream->time_base);
         pkt.pos = -1;
         log_packet(ofmt_ctx, &pkt, "out");
