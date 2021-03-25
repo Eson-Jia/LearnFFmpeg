@@ -426,7 +426,6 @@ void demuxerFunction(AVFormatContext *formatContext, VideoInfo *videoInfo) {
                 cout << "video after wait" << endl;
                 return 0;
             });
-//            cout << "after push video packet" << endl;
         } else if (packet->stream_index == videoInfo->audioIndex) {
             videoInfo->audioPacketList.list_limit_push(packet, 100, []() -> int {
                 cout << "audio before wait" << endl;
@@ -435,7 +434,6 @@ void demuxerFunction(AVFormatContext *formatContext, VideoInfo *videoInfo) {
                 cout << "audio after wait" << endl;
                 return 0;
             });
-//            cout << "after push audio packet" << endl;
         } else {
             cerr << "" << endl;
             // 解引用被 packet 引用的 buffer,并将成员变量重置为默认值
