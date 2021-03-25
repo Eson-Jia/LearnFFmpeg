@@ -26,3 +26,9 @@ ffmpeg -i input.mp4 -vcodec copy output.h264
 ```bash
 play_video input filter_description
 ```
+
+filter description 举例:
+
+- "split [main][tmp]; [tmp] crop=iw:ih/2:0:0, vflip [flip]; [main][flip] overlay=0:H/2"
+    - 将图像在水平中间线翻转镜像
+- "movie=/home/ubuntu/Pictures/6.png[logo];[in][logo]overlay=min(mod(-t*w*10\,W)\,W-w):min(H/W*mod(-t*w*10\,W)\,H-h)"
