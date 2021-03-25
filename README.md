@@ -32,3 +32,23 @@ filter description 举例:
 - "split [main][tmp]; [tmp] crop=iw:ih/2:0:0, vflip [flip]; [main][flip] overlay=0:H/2"
     - 将图像在水平中间线翻转镜像
 - "movie=/home/ubuntu/Pictures/6.png[logo];[in][logo]overlay=min(mod(-t*w*10\,W)\,W-w):min(H/W*mod(-t*w*10\,W)\,H-h)"
+
+### remuxing
+
+remuxing 可以支持读本地文件推 rtsp 流,需要注意需要修改一些地方:
+
+1. 在调用`avformat_alloc_output_context2(&ofmt_ctx, NULL, "rtsp", out_filename)`需要传入`rtsp`格式
+2. 在调用`avformat_write_header`的时候传入一下选项参数.
+    1. 因为推流过去的服务器不支持 udp ,所以我们这里需要强制 tcp.
+
+```c
+    AVDictionay * dict = NULL;
+    av_dict_set(&dict, "rtsp_transport", "tcp", 0);
+    avformat_write_header(ofmt_ctx, &dict);
+```
+
+
+### 硬件加速编解码
+
+参考:
+[ffmpeg实现硬件转码（使用FFmpeg调用NVIDIA GPU实现H265转码H264）](https://blog.csdn.net/qq_22633333/article/details/107701301)
