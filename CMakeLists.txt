@@ -75,6 +75,16 @@ target_link_libraries(
         avcodec
 )
 
+add_executable(encode_audio encode_audio.c)
+
+target_link_libraries(
+        encode_audio
+        avutil
+        avcodec
+        m
+)
+
+
 add_executable(decode_video_cpp decode_video.cpp)
 
 target_link_libraries(
