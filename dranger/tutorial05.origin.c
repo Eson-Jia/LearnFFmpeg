@@ -528,10 +528,6 @@ int video_thread(void *arg) {
             // means we quit getting packets
             break;
         }
-        if (packet_queue_get(&is->videoq, packet, 1) < 0) {
-            // means we quit getting packets
-            break;
-        }
         pts = 0;
 
         // Decode video frame
