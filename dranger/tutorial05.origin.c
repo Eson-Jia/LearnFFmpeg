@@ -19,6 +19,10 @@
 //
 // to play the video stream on your screen.
 
+/**
+ * Chapter: Syncing Video
+ */
+
 #include <libavcodec/avcodec.h>
 #include <libavformat/avformat.h>
 #include <libswscale/swscale.h>
