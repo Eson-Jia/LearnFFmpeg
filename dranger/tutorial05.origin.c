@@ -493,25 +493,28 @@ int queue_picture(VideoState *is, AVFrame *pFrame, double pts) {
     }
     return 0;
 }
-//
-double synchronize_video(VideoState *is, AVFrame *src_frame, double pts) {
+
+double synchronize_video(VideoState *is, AVFrame *src_frame, double pts_multi_time_base) {
 
     double frame_delay;
 
-    if (pts != 0) {
-        /* if we have pts, set video clock to it */
-        is->video_clock = pts;
+    if (pts_multi_time_base != 0) {
+        /* if we have pts_multi_time_base, set video clock to it */
+        is->video_clock = pts_multi_time_base;
     } else {
-        /* if we aren't given a pts, set it to the clock */
-        pts = is->video_clock;
+        /* if we aren't given a pts_multi_time_base, set it to the clock */
+        pts_multi_time_base = is->video_clock;
     }
     /* update the video clock */
     frame_delay = av_q2d(is->video_ctx->time_base);
     /* if we are repeating a frame, adjust clock accordingly */
-//    extra_delay = repeat_pict / (2*fps)
+    /**
+     * When decoding, this signals how much the picture must be delayed.
+     * extra_delay = repeat_pict / (2*fps)
+     */
     frame_delay += src_frame->repeat_pict * (frame_delay * 0.5);
     is->video_clock += frame_delay;
-    return pts;
+    return pts_multi_time_base;
 }
 
 int video_thread(void *arg) {
