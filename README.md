@@ -51,4 +51,11 @@ remuxing 可以支持读本地文件推 rtsp 流,需要注意需要修改一些�
 ### 硬件加速编解码
 
 参考:
-[ffmpeg实现硬件转码（使用FFmpeg调用NVIDIA GPU实现H265转码H264）](https://blog.csdn.net/qq_22633333/article/details/107701301)
+- [ffmpeg实现硬件转码（使用FFmpeg调用NVIDIA GPU实现H265转码H264）](https://blog.csdn.net/qq_22633333/article/details/107701301)
+
+### encode_video
+
+### Syncing Video
+
+教程中音视频同步是视频向音频同步,就是在音频的处理流程中获取音频的 pts *time_base.当视频的 schedule 到了之后,根据 对比两个 pts * time_base 之间的
+差值调整对本帧的后续操作:加速或者慢速播放.
