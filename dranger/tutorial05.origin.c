@@ -208,7 +208,6 @@ int audio_decode_frame(VideoState *is, uint8_t *audio_buf, int buf_size, double 
 
     int len1, data_size = 0;
     AVPacket *pkt = &is->audio_pkt;
-    double pts;
     int n;
 
     for (;;) {
@@ -236,8 +235,8 @@ int audio_decode_frame(VideoState *is, uint8_t *audio_buf, int buf_size, double 
                 /* No data yet, get more frames */
                 continue;
             }
-            pts = is->audio_clock;
-            *pts_ptr = pts;
+            // 注意这里 pts_ptr 获取的是还未添加此 frame 时长的 audio_clock
+            *pts_ptr = is->audio_clock;
             n = 2 * is->audio_ctx->channels;
             is->audio_clock += (double) data_size /
                                (double) (n * is->audio_ctx->sample_rate);
