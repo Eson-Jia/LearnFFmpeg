@@ -20,6 +20,8 @@
 //
 // to play the video stream on your screen.
 
+// Chapter: Spawning Threads
+
 #include <libavcodec/avcodec.h>
 #include <libavformat/avformat.h>
 #include <libswscale/swscale.h>
