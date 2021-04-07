@@ -377,6 +377,7 @@ void video_refresh_timer(void *userdata) {
             vp = &is->pictq[is->pictq_rindex];
 
             delay = vp->pts_clock - is->frame_last_pts_clock; /* the pts from last time */
+            // make sure the delay between the PTS and the previous PTS make sense.
             if (delay <= 0 || delay >= 1.0) {
                 /* if incorrect delay, use previous one */
                 delay = is->frame_last_delay;
@@ -391,6 +392,7 @@ void video_refresh_timer(void *userdata) {
 
             /* Skip or repeat the frame. Take delay into account
            FFPlay still doesn't "know if this is the best guess." */
+            // 确保 sync_threshold 永远不小于两个前后的 PTS 之间的差值
             sync_threshold = (delay > AV_SYNC_THRESHOLD) ? delay : AV_SYNC_THRESHOLD;
             if (fabs(diff) < AV_NOSYNC_THRESHOLD) {
                 if (diff <= -sync_threshold) {
@@ -401,6 +403,12 @@ void video_refresh_timer(void *userdata) {
             }
             is->frame_timer += delay;
             /* computer the REAL delay */
+            /**
+             * This frame timer will sum up all of our calculated delays while playing the movie.
+             * In other words, this frame_timer is what time it should be when we display the next frame.
+             * We simply add the new delay to the frame timer, compare it to the time on our computer's clock,
+             * and use that value to schedule the next refresh.
+             */
             actual_delay = is->frame_timer - (av_gettime() / 1000000.0);
             if (actual_delay < 0.010) {
                 /* Really it should skip the picture instead */
