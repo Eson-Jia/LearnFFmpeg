@@ -265,3 +265,22 @@ target_link_libraries(
         SDL2-2.0
         )
 
+
+add_executable(tutorial5 dranger/tutorial05.c)
+
+target_link_libraries(
+        tutorial5
+        avcodec
+)
+
+add_executable(muxing muxing.c)
+
+target_link_libraries(
+        muxing
+        m
+        avutil
+        avformat
+        swscale
+        swresample
+        avcodec
+)
