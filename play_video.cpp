@@ -71,6 +71,72 @@ public:
     }
 };
 
+class PacketQueue {
+    PacketQueue() {
+        this->first_packet = nullptr;
+        this->last_packet = nullptr;
+        this->nb_packets = 0;
+        this->size = 0;
+        this->mutex = SDL_CreateMutex();
+        this->cond = SDL_CreateCond();
+    }
+
+    int get(AVPacket *packet, bool block) {
+        auto ret = 0;
+        SDL_LockMutex(this->mutex);
+        while (true) {
+            auto pkt = this->first_packet;
+            if (pkt != nullptr) {
+                this->first_packet = pkt->next;
+                if (this->first_packet == nullptr) {
+                    this->last_packet = nullptr;
+                }
+                this->nb_packets--;
+                this->size -= pkt->pkt.size;
+                *packet = pkt->pkt;
+                av_free(pkt);
+                ret = 1;
+                break;
+            } else if (block) {
+                SDL_CondWait(this->cond, this->mutex);
+            } else {
+                break;
+            }
+        }
+        SDL_UnlockMutex(this->mutex);
+        return ret;
+    }
+
+/**
+ *
+ * @param pkt
+ * @return
+ */
+    int put(AVPacket *pkt) {
+        /**
+         * 这个链表是需要加锁的,因为空链表读取操作会阻塞
+         * 问题:操作 std::list 的时候是否需要加锁?
+         */
+        AVPacketList *current = static_cast<AVPacketList *>(av_malloc(sizeof(AVPacketList)));
+        current->pkt = *pkt;
+        if (this->last_packet == nullptr) {
+            this->first_packet = current;
+        }
+        this->last_packet->next = current;
+        this->last_packet = current;
+        this->nb_packets++;
+        this->size += pkt->size;
+        SDL_CondSignal(this->cond);
+    }
+private:
+    AVPacketList *first_packet, *last_packet;
+    int nb_packets;
+    int size;
+    SDL_mutex *mutex;
+    SDL_cond *cond;
+};
+
+
 class VideoInfo {
 public:
     VideoInfo() {
