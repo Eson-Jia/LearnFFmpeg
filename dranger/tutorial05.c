@@ -152,6 +152,13 @@ int packet_queue_put(PacketQueue *q, AVPacket *pkt) {
     return 0;
 }
 
+/**
+ *
+ * @param q
+ * @param pkt 传出参数
+ * @param block
+ * @return
+ */
 static int packet_queue_get(PacketQueue *q, AVPacket *pkt, int block) {
     AVPacketList *pkt1;
     int ret;

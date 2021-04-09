@@ -201,7 +201,6 @@ double get_audio_clock(VideoState *is) {
 }
 
 int audio_decode_frame(VideoState *is, uint8_t *audio_buf, int buf_size, double *pts_ptr) {
-
     int len1, data_size = 0;
     AVPacket *pkt = &is->audio_pkt;
     double pts;

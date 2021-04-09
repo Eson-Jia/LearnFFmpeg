@@ -24,6 +24,7 @@ extern "C" {
 #define FF_REFRESH_EVENT (SDL_USEREVENT)
 #define  FF_QUIT_EVENT SDL_USEREVENT+1
 #define FRAME_RING_QUEUE_MAX_SIZE 1
+#define MAX_AUDIO_FRAME_SIZE 192000
 
 using namespace std;
 
@@ -123,11 +124,11 @@ public:
         ringQSize = 0;
         ringQWriteIndex = 0;
         ringQReadIndex = 0;
+        videoClock = 0;
+        audioClock = 0;
     };
     AVFormatContext *formatContext;
     PacketQueue videoPacketList;
-
-
     int videoIndex;
     AVCodecContext *videoCodecContext;
     AVCodec *videoCodec;
@@ -150,14 +151,17 @@ public:
     AVFilterContext *bufferSrcFilterCtx;
     AVFilterContext *bufferSinkFilterCtx;
     string filterDescription;
-    double videoClock = 0;
+    double videoClock;
 
-    int audioIndex = -1;
+    int audioIndex;
     AVCodecContext *audioCodecContext;
     AVCodec *audioCodec;
     SwrContext *resampleContext;
     PacketQueue audioPacketList;
     double audioClock;
+    uint8_t audioBuffer[MAX_AUDIO_FRAME_SIZE * 3 / 2];
+    unsigned int audioBufferSize;
+    unsigned int audioBufferIndex;
 
     bool quit;
     bool audioNeedSendPacket;
@@ -244,12 +248,12 @@ int init_filter(VideoInfo *videoInfo) {
 }
 
 int audio_decode_frame(VideoInfo *videoInfo, uint8_t *audio_buf, int buf_size) {
-
-    auto ret = 0;
+    int ret;
     for (;;) {
         while (!videoInfo->audioNeedSendPacket) {
             auto frame = av_frame_alloc();
             ret = avcodec_receive_frame(videoInfo->audioCodecContext, frame);
+            videoInfo->audioClock = av_q2d(videoInfo->audioCodecContext->time_base) * frame->pts;
             if (ret == AVERROR_EOF ||
                 ret == AVERROR(EAGAIN)) {
                 videoInfo->audioNeedSendPacket = true;
@@ -269,6 +273,8 @@ int audio_decode_frame(VideoInfo *videoInfo, uint8_t *audio_buf, int buf_size) {
         }
         auto packet = av_packet_alloc();
         videoInfo->audioPacketList.get(packet, true);
+        if (packet->pts != AV_NOPTS_VALUE)
+            videoInfo->audioClock = packet->pts * av_q2d(videoInfo->audioCodecContext->time_base);
         ret = avcodec_send_packet(videoInfo->audioCodecContext, packet);
         av_packet_free(&packet);
         if (ret < 0)
@@ -277,34 +283,43 @@ int audio_decode_frame(VideoInfo *videoInfo, uint8_t *audio_buf, int buf_size) {
     }
 }
 
+double get_audio_clock(VideoInfo *videoInfo) {
+    auto audioClock = videoInfo->audioClock;
+    auto leftBufferSize = videoInfo->audioBufferSize - videoInfo->audioBufferIndex;
+    auto n = videoInfo->audioCodecContext->channels * 4;
+    auto bytesPerSecond = 0;
+    if (videoInfo->audioCodecContext) {
+        bytesPerSecond = videoInfo->audioCodecContext->sample_rate * n;
+    }
+    if (bytesPerSecond) {
+        audioClock -= (double) leftBufferSize / bytesPerSecond;
+    }
+    return audioClock;
+}
+
 void audio_callback(void *userdata, Uint8 *stream, int len) {
     auto videoInfo = static_cast<VideoInfo *>(userdata);
     int len1, audio_size;
-
-    static uint8_t audio_buf[(MAX_AUDIO_FRAME_SIZE * 3) / 2];
-    static unsigned int audio_buf_size = 0;
-    static unsigned int audio_buf_index = 0;
-
     while (len > 0) {
-        if (audio_buf_index >= audio_buf_size) {
+        if (videoInfo->audioBufferIndex >= videoInfo->audioBufferSize) {
             /* We have already sent all our data; get more */
-            audio_size = audio_decode_frame(videoInfo, audio_buf, sizeof(audio_buf));
+            audio_size = audio_decode_frame(videoInfo, videoInfo->audioBuffer, sizeof(videoInfo->audioBuffer));
             if (audio_size < 0) {
                 /* If error, output silence */
-                audio_buf_size = 1024; // arbitrary?
-                memset(audio_buf, 0, audio_buf_size);
+                videoInfo->audioBufferSize = 1024; // arbitrary?
+                memset(videoInfo->audioBuffer, 0, videoInfo->audioBufferSize);
             } else {
-                audio_buf_size = audio_size;
+                videoInfo->audioBufferSize = audio_size;
             }
-            audio_buf_index = 0;
+            videoInfo->audioBufferIndex = 0;
         }
-        len1 = audio_buf_size - audio_buf_index;
+        len1 = videoInfo->audioBufferSize - videoInfo->audioBufferIndex;
         if (len1 > len)
             len1 = len;
-        memcpy(stream, (uint8_t *) audio_buf + audio_buf_index, len1);
+        memcpy(stream, (uint8_t *) videoInfo->audioBuffer + videoInfo->audioBufferIndex, len1);
         len -= len1;
         stream += len1;
-        audio_buf_index += len1;
+        videoInfo->audioBufferIndex += len1;
     }
 }
 
@@ -326,6 +341,7 @@ void scheduleRefresh(VideoInfo *videoInfo, int delay) {
 };
 
 void showFrame(VideoInfo *videoInfo) {
+    SDL_LockMutex(videoInfo->ringQMutex);
     auto frame = &videoInfo->frameRingQ[videoInfo->ringQReadIndex];
     sws_scale(videoInfo->swsContext,
               frame->frame->data,
@@ -340,6 +356,7 @@ void showFrame(VideoInfo *videoInfo) {
     SDL_RenderPresent(videoInfo->renderer);
 //    av_frame_unref(frame); 不需要再调用这句话
     av_frame_free(&frame->frame);
+    SDL_UnlockMutex(videoInfo->ringQMutex);
 }
 
 void videoRefreshTimer(void *data) {
@@ -350,6 +367,13 @@ void videoRefreshTimer(void *data) {
 //            auto delay = PTSFrame->clock - videoInfo.audioClock;
             scheduleRefresh(videoInfo, 40);
             showFrame(videoInfo);
+            if (++videoInfo->ringQReadIndex == FRAME_RING_QUEUE_MAX_SIZE) {
+                videoInfo->ringQReadIndex = 0;
+                SDL_LockMutex(videoInfo->ringQMutex);
+                videoInfo->ringQSize--;
+                SDL_CondSignal(videoInfo->ringQCond);
+                SDL_UnlockMutex(videoInfo->ringQMutex);
+            }
         } else {
             scheduleRefresh(videoInfo, 10);
         }
@@ -377,7 +401,7 @@ void decodeVideo(VideoInfo *videoInfo) {
             if (ret < 0) {
                 error_out("failed in buffersrc add frame");
             }
-            AVFrame frame, *filteredFrame = &frame;
+            auto filteredFrame = av_frame_alloc();
             do {
                 ret = av_buffersink_get_frame(videoInfo->bufferSinkFilterCtx, filteredFrame);
                 if (AVERROR(EAGAIN) == ret || AVERROR_EOF == ret) {
