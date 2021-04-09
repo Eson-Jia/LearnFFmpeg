@@ -23,55 +23,23 @@ extern "C" {
 #define MAX_AUDIO_FRAME_SIZE 192000
 #define FF_REFRESH_EVENT (SDL_USEREVENT)
 #define  FF_QUIT_EVENT SDL_USEREVENT+1
+#define FRAME_RING_QUEUE_MAX_SIZE 1
+
 using namespace std;
 
-template<class T>
-class List {
+class FrameWithClock {
 public:
-    List() {
+    FrameWithClock() {
+        frame = nullptr;
+        clock = 0;
     }
 
-    list<T> theList;
-    condition_variable condition;
-    mutex conditionMutex;
-
-    T list_get(bool block = true) {
-        unique_lock<mutex> locker(conditionMutex);
-        while (theList.empty() && block) {
-            condition.wait(locker);
-        }
-        if (theList.empty()) {
-            return nullptr;
-        }
-        auto last = theList.back();
-        theList.pop_back();
-        condition.notify_one();
-        return last;
-    }
-
-    bool empty() {
-        unique_lock<mutex> locker(conditionMutex);
-        return theList.empty();
-    }
-
-    void list_limit_push(T t, int max, function<int()> beforeWait, function<int()> afterWait) {
-        unique_lock<mutex> locker(conditionMutex);
-        auto first = true;
-        while (theList.size() >= max) {
-            if (first) {
-                beforeWait();
-                first = false;
-            }
-            condition.wait(locker);
-        }
-        theList.emplace_front(t);
-        if (!first)
-            afterWait();
-        condition.notify_one();
-    }
+    AVFrame *frame;
+    double clock;
 };
 
 class PacketQueue {
+public:
     PacketQueue() {
         this->first_packet = nullptr;
         this->last_packet = nullptr;
@@ -118,16 +86,23 @@ class PacketQueue {
          * 问题:操作 std::list 的时候是否需要加锁?
          */
         AVPacketList *current = static_cast<AVPacketList *>(av_malloc(sizeof(AVPacketList)));
+        if (current == nullptr)
+            return -1;
         current->pkt = *pkt;
-        if (this->last_packet == nullptr) {
+        current->next = nullptr;
+
+        SDL_LockMutex(this->mutex);
+        if (this->last_packet == nullptr)
             this->first_packet = current;
-        }
-        this->last_packet->next = current;
+        else
+            this->last_packet->next = current;
         this->last_packet = current;
         this->nb_packets++;
         this->size += pkt->size;
         SDL_CondSignal(this->cond);
+        SDL_UnlockMutex(this->mutex);
     }
+
 private:
     AVPacketList *first_packet, *last_packet;
     int nb_packets;
@@ -143,14 +118,27 @@ public:
         videoIndex = -1;
         audioIndex = -1;
         quit = false;
+        ringQMutex = SDL_CreateMutex();
+        ringQCond = SDL_CreateCond();
+        ringQSize = 0;
+        ringQWriteIndex = 0;
+        ringQReadIndex = 0;
     };
     AVFormatContext *formatContext;
-    List<AVPacket *> videoPacketList;
+    PacketQueue videoPacketList;
+
 
     int videoIndex;
     AVCodecContext *videoCodecContext;
     AVCodec *videoCodec;
-    List<AVFrame *> videoFrameList;
+
+    FrameWithClock frameRingQ[FRAME_RING_QUEUE_MAX_SIZE];
+    SDL_mutex *ringQMutex;
+    SDL_cond *ringQCond;
+    int ringQSize;
+    int ringQReadIndex;
+    int ringQWriteIndex;
+
     shared_ptr<thread> decodeVideoThread;
     SwsContext *swsContext;
     AVFrame *YUVFrame;
@@ -162,16 +150,51 @@ public:
     AVFilterContext *bufferSrcFilterCtx;
     AVFilterContext *bufferSinkFilterCtx;
     string filterDescription;
+    double videoClock = 0;
 
-    int audioIndex;
+    int audioIndex = -1;
     AVCodecContext *audioCodecContext;
     AVCodec *audioCodec;
     SwrContext *resampleContext;
-    List<AVPacket *> audioPacketList;
-    List<AVFrame *> audioFrameList;
-    shared_ptr<thread> decodeAudioThread;
+    PacketQueue audioPacketList;
+    double audioClock;
+
     bool quit;
+    bool audioNeedSendPacket;
 };
+
+void queue_frame(VideoInfo *videoInfo, AVFrame *frame, double pts_clock) {
+    SDL_LockMutex(videoInfo->ringQMutex);
+    while (videoInfo->ringQSize == FRAME_RING_QUEUE_MAX_SIZE) {
+        SDL_CondWait(videoInfo->ringQCond, videoInfo->ringQMutex);
+    }
+    SDL_UnlockMutex(videoInfo->ringQMutex);
+    auto ptsFrame = &videoInfo->frameRingQ[videoInfo->ringQWriteIndex];
+    /**
+     * 内存问题:谁申请谁释放
+     * 这里如何进行内存管理
+     */
+    ptsFrame->frame = frame;
+    ptsFrame->clock = pts_clock;
+    if (++videoInfo->ringQWriteIndex == FRAME_RING_QUEUE_MAX_SIZE) {
+        videoInfo->ringQWriteIndex = 0;
+    }
+    SDL_LockMutex(videoInfo->ringQMutex);
+    videoInfo->ringQSize++;
+    SDL_UnlockMutex(videoInfo->ringQMutex);
+}
+
+double syncing_video(VideoInfo *videoInfo, AVFrame *frame, double clock) {
+    if (clock > 0) {
+        videoInfo->videoClock = clock;
+    } else {
+        clock = videoInfo->videoClock;
+    }
+    auto delay = av_q2d(videoInfo->videoCodecContext->time_base);
+    // extra delay  = repeat_pict / (2*fps) = repeat_pict * time_base * 0.5;
+    videoInfo->videoClock += (frame->repeat_pict * delay * 0.5 + delay);
+    return clock;
+}
 
 void error_out(string msg) {
     cerr << msg << endl;
@@ -221,26 +244,41 @@ int init_filter(VideoInfo *videoInfo) {
 }
 
 int audio_decode_frame(VideoInfo *videoInfo, uint8_t *audio_buf, int buf_size) {
-    static int ret = -1;
-    auto frame = videoInfo->audioFrameList.list_get();
-    auto data_size = av_samples_get_buffer_size(nullptr, frame->channels, frame->nb_samples,
-                                                videoInfo->audioCodecContext->sample_fmt, 0);
-    int convert_ret = swr_convert(videoInfo->resampleContext,
-                                  &audio_buf,
-                                  frame->nb_samples,
-                                  (const uint8_t **) frame->data,
-                                  frame->nb_samples);
-//    av_frame_unref(frame); no need
-    av_frame_free(&frame);
-    if (convert_ret >= 0) {
-        return data_size;
+
+    auto ret = 0;
+    for (;;) {
+        while (!videoInfo->audioNeedSendPacket) {
+            auto frame = av_frame_alloc();
+            ret = avcodec_receive_frame(videoInfo->audioCodecContext, frame);
+            if (ret == AVERROR_EOF ||
+                ret == AVERROR(EAGAIN)) {
+                videoInfo->audioNeedSendPacket = true;
+                break;
+            }
+            ret = swr_convert(videoInfo->resampleContext,
+                              &audio_buf,
+                              frame->nb_samples,
+                              (const uint8_t **) frame->data,
+                              frame->nb_samples);
+            if (ret < 0)
+                return ret;
+            auto convertedSize = av_samples_get_buffer_size(nullptr, frame->channels, ret,
+                                                            videoInfo->audioCodecContext->sample_fmt, 0);
+            av_frame_free(&frame);
+            return convertedSize;
+        }
+        auto packet = av_packet_alloc();
+        videoInfo->audioPacketList.get(packet, true);
+        ret = avcodec_send_packet(videoInfo->audioCodecContext, packet);
+        av_packet_free(&packet);
+        if (ret < 0)
+            return ret;
+        videoInfo->audioNeedSendPacket = false;
     }
-    return 0;
 }
 
 void audio_callback(void *userdata, Uint8 *stream, int len) {
     auto videoInfo = static_cast<VideoInfo *>(userdata);
-    cout << "callback len: " << len << endl;
     int len1, audio_size;
 
     static uint8_t audio_buf[(MAX_AUDIO_FRAME_SIZE * 3) / 2];
@@ -264,7 +302,6 @@ void audio_callback(void *userdata, Uint8 *stream, int len) {
         if (len1 > len)
             len1 = len;
         memcpy(stream, (uint8_t *) audio_buf + audio_buf_index, len1);
-        cout << "memcpy: " << len1 << endl;
         len -= len1;
         stream += len1;
         audio_buf_index += len1;
@@ -289,10 +326,10 @@ void scheduleRefresh(VideoInfo *videoInfo, int delay) {
 };
 
 void showFrame(VideoInfo *videoInfo) {
-    auto frame = videoInfo->videoFrameList.list_get();
+    auto frame = &videoInfo->frameRingQ[videoInfo->ringQReadIndex];
     sws_scale(videoInfo->swsContext,
-              frame->data,
-              frame->linesize,
+              frame->frame->data,
+              frame->frame->linesize,
               0,
               videoInfo->videoCodecContext->height,
               videoInfo->YUVFrame->data,
@@ -302,13 +339,15 @@ void showFrame(VideoInfo *videoInfo) {
     SDL_RenderCopy(videoInfo->renderer, videoInfo->texture, nullptr, nullptr);
     SDL_RenderPresent(videoInfo->renderer);
 //    av_frame_unref(frame); 不需要再调用这句话
-    av_frame_free(&frame);
+    av_frame_free(&frame->frame);
 }
 
 void videoRefreshTimer(void *data) {
     auto videoInfo = static_cast<VideoInfo *>(data);
     if (videoInfo->videoCodecContext != nullptr) {
-        if (!videoInfo->videoFrameList.empty()) {
+        if (videoInfo->ringQSize > 0) {
+            auto PTSFrame = &videoInfo->frameRingQ[videoInfo->ringQReadIndex];
+//            auto delay = PTSFrame->clock - videoInfo.audioClock;
             scheduleRefresh(videoInfo, 40);
             showFrame(videoInfo);
         } else {
@@ -321,10 +360,8 @@ void videoRefreshTimer(void *data) {
 
 void decodeVideo(VideoInfo *videoInfo) {
     while (!videoInfo->quit) {
-        auto packet = videoInfo->videoPacketList.list_get();
-        if (packet == nullptr) {
-            break;
-        }
+        auto packet = av_packet_alloc();
+        videoInfo->videoPacketList.get(packet, true);
         avcodec_send_packet(videoInfo->videoCodecContext, packet);
         int ret;
         AVFrame frame;
@@ -340,56 +377,24 @@ void decodeVideo(VideoInfo *videoInfo) {
             if (ret < 0) {
                 error_out("failed in buffersrc add frame");
             }
+            AVFrame frame, *filteredFrame = &frame;
             do {
-                auto afterFrame = av_frame_alloc();
-                ret = av_buffersink_get_frame(videoInfo->bufferSinkFilterCtx, afterFrame);
+                ret = av_buffersink_get_frame(videoInfo->bufferSinkFilterCtx, filteredFrame);
                 if (AVERROR(EAGAIN) == ret || AVERROR_EOF == ret) {
-                    av_frame_free(&afterFrame);
                     break;
                 }
                 if (ret < 0) {
                     error_out("failed iin buffer sink get frame");
                 }
-                videoInfo->videoFrameList.list_limit_push(afterFrame, 100, []() -> int {
-                    cout << "video frame is full, before wait" << endl;
-                }, []() -> int {
-                    cout << "video frame is full, after wait" << endl;
-                });
+                double framePTSClock =
+                        av_q2d(videoInfo->videoCodecContext->time_base) * filteredFrame->best_effort_timestamp;
+                auto ptsClock = syncing_video(videoInfo, filteredFrame, framePTSClock);
+                queue_frame(videoInfo, filteredFrame, ptsClock);
             } while (ret == 0);
         } while (ret == 0);
         av_packet_free(&packet);
     }
     cerr << "video decode thread exit" << endl;
-}
-
-void decodeAudio(VideoInfo *videoInfo) {
-    while (!videoInfo->quit) {
-        auto packet = videoInfo->audioPacketList.list_get();
-        if (packet == nullptr) {
-            break;
-        }
-        avcodec_send_packet(videoInfo->audioCodecContext, packet);
-        int ret;
-        do {
-            auto frame = av_frame_alloc();
-            ret = avcodec_receive_frame(videoInfo->audioCodecContext, frame);
-            if (ret == AVERROR_EOF ||
-                AVERROR(EAGAIN) == ret) {
-                break;
-            }
-            if (ret < 0) {
-                error_out("decode audio:failed in receive frame");
-            }
-            videoInfo->audioFrameList.list_limit_push(frame, 100, []() -> int {
-                cout << "audio frame is full, before wait" << endl;
-                return 0;
-            }, []() -> int {
-                cout << "audio frame is full, after wait" << endl;
-                return 0;
-            });
-        } while (ret == 0);
-        av_packet_free(&packet);
-    }
 }
 
 void demuxerFunction(AVFormatContext *formatContext, VideoInfo *videoInfo) {
@@ -427,7 +432,6 @@ void demuxerFunction(AVFormatContext *formatContext, VideoInfo *videoInfo) {
                     if (swr_init(videoInfo->resampleContext) < 0) {
                         error_out("failed in init swr");
                     }
-                    videoInfo->decodeAudioThread = make_shared<thread>(decodeAudio, videoInfo);
                     break;
                 case AVMEDIA_TYPE_VIDEO:
                     if (videoInfo->videoIndex != -1)
@@ -485,21 +489,9 @@ void demuxerFunction(AVFormatContext *formatContext, VideoInfo *videoInfo) {
             return;
         }
         if (packet->stream_index == videoInfo->videoIndex) {
-            videoInfo->videoPacketList.list_limit_push(packet, 100, []() -> int {
-                cout << "video before wait" << endl;
-                return 0;
-            }, []() -> int {
-                cout << "video after wait" << endl;
-                return 0;
-            });
+            videoInfo->videoPacketList.put(packet);
         } else if (packet->stream_index == videoInfo->audioIndex) {
-            videoInfo->audioPacketList.list_limit_push(packet, 100, []() -> int {
-                cout << "audio before wait" << endl;
-                return 0;
-            }, []() -> int {
-                cout << "audio after wait" << endl;
-                return 0;
-            });
+            videoInfo->audioPacketList.put(packet);
         } else {
             cerr << "" << endl;
             // 解引用被 packet 引用的 buffer,并将成员变量重置为默认值
@@ -578,5 +570,4 @@ int main(int argc, char **argv) {
     }
     demuxerThread.join();
     videoInfo->decodeVideoThread->join();
-    videoInfo->decodeAudioThread->join();
 }
