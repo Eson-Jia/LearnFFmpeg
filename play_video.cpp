@@ -194,9 +194,10 @@ double syncing_video(VideoInfo *videoInfo, AVFrame *frame, double clock) {
     } else {
         clock = videoInfo->videoClock;
     }
-    auto delay = av_q2d(videoInfo->videoCodecContext->time_base);
+    auto delay = av_q2d(av_inv_q(videoInfo->videoCodecContext->framerate));
     // extra delay  = repeat_pict / (2*fps) = repeat_pict * time_base * 0.5;
-    videoInfo->videoClock += (frame->repeat_pict * delay * 0.5 + delay);
+    auto extraDelay = frame->repeat_pict / (2 * av_q2d(videoInfo->videoCodecContext->framerate));
+    videoInfo->videoClock += (delay + extraDelay);
     return clock;
 }
 
