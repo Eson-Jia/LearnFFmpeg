@@ -10,6 +10,7 @@ extern "C" {
 #include <libavfilter/avfilter.h>
 #include <libavfilter/buffersrc.h>
 #include <libavfilter/buffersink.h>
+#include <libavutil/time.h>
 }
 
 #include <iostream>
@@ -25,6 +26,9 @@ extern "C" {
 #define  FF_QUIT_EVENT SDL_USEREVENT+1
 #define FRAME_RING_QUEUE_MAX_SIZE 1
 #define MAX_AUDIO_FRAME_SIZE 192000
+
+#define AV_SYNC_THRESHOLD 0.01
+#define AV_NO_SYNC_THRESHOLD 10.0
 
 using namespace std;
 
@@ -126,6 +130,9 @@ public:
         ringQReadIndex = 0;
         videoClock = 0;
         audioClock = 0;
+        timerClock = 0;
+        frameLastDelay = 0;
+        frameLastPTSClock = 0;
     };
     AVFormatContext *formatContext;
     PacketQueue videoPacketList;
@@ -151,7 +158,11 @@ public:
     AVFilterContext *bufferSrcFilterCtx;
     AVFilterContext *bufferSinkFilterCtx;
     string filterDescription;
+    // A/V syncing
     double videoClock;
+    double timerClock;
+    double frameLastDelay;
+    double frameLastPTSClock;
 
     int audioIndex;
     AVCodecContext *audioCodecContext;
@@ -254,7 +265,8 @@ int audio_decode_frame(VideoInfo *videoInfo, uint8_t *audio_buf, int buf_size) {
         while (!videoInfo->audioNeedSendPacket) {
             auto frame = av_frame_alloc();
             ret = avcodec_receive_frame(videoInfo->audioCodecContext, frame);
-            videoInfo->audioClock = av_q2d(videoInfo->audioCodecContext->time_base) * frame->pts;
+            videoInfo->audioClock =
+                    av_q2d(videoInfo->formatContext->streams[videoInfo->audioIndex]->time_base) * frame->pts;
             if (ret == AVERROR_EOF ||
                 ret == AVERROR(EAGAIN)) {
                 videoInfo->audioNeedSendPacket = true;
@@ -275,7 +287,8 @@ int audio_decode_frame(VideoInfo *videoInfo, uint8_t *audio_buf, int buf_size) {
         auto packet = av_packet_alloc();
         videoInfo->audioPacketList.get(packet, true);
         if (packet->pts != AV_NOPTS_VALUE)
-            videoInfo->audioClock = packet->pts * av_q2d(videoInfo->audioCodecContext->time_base);
+            videoInfo->audioClock =
+                    packet->pts * av_q2d(videoInfo->formatContext->streams[videoInfo->audioIndex]->time_base);
         ret = avcodec_send_packet(videoInfo->audioCodecContext, packet);
         av_packet_free(&packet);
         if (ret < 0)
@@ -365,8 +378,28 @@ void videoRefreshTimer(void *data) {
     if (videoInfo->videoCodecContext != nullptr) {
         if (videoInfo->ringQSize > 0) {
             auto PTSFrame = &videoInfo->frameRingQ[videoInfo->ringQReadIndex];
-//            auto delay = PTSFrame->clock - videoInfo.audioClock;
-            scheduleRefresh(videoInfo, 40);
+            auto delay = PTSFrame->clock - videoInfo->frameLastPTSClock;
+
+            if (delay <= 0 || delay >= 1.0)
+                delay = videoInfo->frameLastDelay;
+
+            //save for next time
+            videoInfo->frameLastPTSClock = PTSFrame->clock;
+            videoInfo->frameLastDelay = delay;
+
+            auto clockDiff = PTSFrame->clock - get_audio_clock(videoInfo);
+            auto syncThreshold = delay > AV_SYNC_THRESHOLD ? delay : AV_SYNC_THRESHOLD;
+
+            if (abs(clockDiff) < AV_NO_SYNC_THRESHOLD) {
+                if (clockDiff < -syncThreshold) {
+                    delay = 0;
+                } else if (clockDiff >= syncThreshold) {
+                    delay *= 2;
+                }
+            }
+            videoInfo->timerClock += delay;
+            auto actualDelay = videoInfo->timerClock - av_gettime() / 1000000.0;
+            scheduleRefresh(videoInfo, actualDelay * 1000 + 0.5);
             showFrame(videoInfo);
             if (++videoInfo->ringQReadIndex == FRAME_RING_QUEUE_MAX_SIZE) {
                 videoInfo->ringQReadIndex = 0;
@@ -412,7 +445,8 @@ void decodeVideo(VideoInfo *videoInfo) {
                     error_out("failed iin buffer sink get frame");
                 }
                 double framePTSClock =
-                        av_q2d(videoInfo->videoCodecContext->time_base) * filteredFrame->best_effort_timestamp;
+                        av_q2d(videoInfo->formatContext->streams[videoInfo->videoIndex]->time_base) *
+                        filteredFrame->best_effort_timestamp;
                 auto ptsClock = syncing_video(videoInfo, filteredFrame, framePTSClock);
                 queue_frame(videoInfo, filteredFrame, ptsClock);
             } while (ret == 0);
@@ -467,6 +501,8 @@ void demuxerFunction(AVFormatContext *formatContext, VideoInfo *videoInfo) {
                     if (videoInfo->decodeVideoThread == nullptr) {
                         videoInfo->decodeVideoThread = make_shared<thread>(decodeVideo, videoInfo);
                     }
+                    videoInfo->timerClock = av_gettime() / 1000000.0;
+                    videoInfo->frameLastDelay = 40e-3;
                     videoInfo->swsContext = sws_getContext(
                             //src
                             codecContext->width,
