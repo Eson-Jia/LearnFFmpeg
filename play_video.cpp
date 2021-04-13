@@ -403,11 +403,11 @@ void videoRefreshTimer(void *data) {
             showFrame(videoInfo);
             if (++videoInfo->ringQReadIndex == FRAME_RING_QUEUE_MAX_SIZE) {
                 videoInfo->ringQReadIndex = 0;
-                SDL_LockMutex(videoInfo->ringQMutex);
-                videoInfo->ringQSize--;
-                SDL_CondSignal(videoInfo->ringQCond);
-                SDL_UnlockMutex(videoInfo->ringQMutex);
             }
+            SDL_LockMutex(videoInfo->ringQMutex);
+            videoInfo->ringQSize--;
+            SDL_CondSignal(videoInfo->ringQCond);
+            SDL_UnlockMutex(videoInfo->ringQMutex);
         } else {
             scheduleRefresh(videoInfo, 10);
         }
