@@ -350,6 +350,11 @@ Uint32 freshTimerCallback(Uint32 interval, void *opaque) {
     return 0;
 };
 
+/**
+ *
+ * @param videoInfo
+ * @param delay milliseconds
+ */
 void scheduleRefresh(VideoInfo *videoInfo, int delay) {
     SDL_AddTimer(delay, freshTimerCallback, videoInfo);
 };
