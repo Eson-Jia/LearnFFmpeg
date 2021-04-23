@@ -362,14 +362,7 @@ void scheduleRefresh(VideoInfo *videoInfo, int delay) {
 void showFrame(VideoInfo *videoInfo) {
     SDL_LockMutex(videoInfo->ringQMutex);
     auto frame = &videoInfo->frameRingQ[videoInfo->ringQReadIndex];
-    sws_scale(videoInfo->swsContext,
-              frame->frame->data,
-              frame->frame->linesize,
-              0,
-              videoInfo->videoCodecContext->height,
-              videoInfo->YUVFrame->data,
-              videoInfo->YUVFrame->linesize);
-    SDL_UpdateTexture(videoInfo->texture, nullptr, videoInfo->YUVFrame->data[0], videoInfo->YUVFrame->linesize[0]);
+    SDL_UpdateTexture(videoInfo->texture, nullptr, frame->frame->data[0], frame->frame->linesize[0]);
     SDL_RenderClear(videoInfo->renderer);
     SDL_RenderCopy(videoInfo->renderer, videoInfo->texture, nullptr, nullptr);
     SDL_RenderPresent(videoInfo->renderer);
@@ -440,20 +433,27 @@ void decodeVideo(VideoInfo *videoInfo) {
             if (ret < 0) {
                 error_out("failed in buffersrc add frame");
             }
-            auto filteredFrame = av_frame_alloc();
+            auto scaledFrame = av_frame_alloc();
             do {
-                ret = av_buffersink_get_frame(videoInfo->bufferSinkFilterCtx, filteredFrame);
+                ret = av_buffersink_get_frame(videoInfo->bufferSinkFilterCtx, &frame);
                 if (AVERROR(EAGAIN) == ret || AVERROR_EOF == ret) {
                     break;
                 }
                 if (ret < 0) {
                     error_out("failed iin buffer sink get frame");
                 }
+                sws_scale(videoInfo->swsContext,
+                          frame.data,
+                          frame.linesize,
+                          0,
+                          videoInfo->videoCodecContext->height,
+                          scaledFrame->data,
+                          scaledFrame->linesize);
                 double framePTSClock =
                         av_q2d(videoInfo->formatContext->streams[videoInfo->videoIndex]->time_base) *
-                        filteredFrame->best_effort_timestamp;
-                auto ptsClock = syncing_video(videoInfo, filteredFrame, framePTSClock);
-                queue_frame(videoInfo, filteredFrame, ptsClock);
+                        scaledFrame->best_effort_timestamp;
+                auto ptsClock = syncing_video(videoInfo, scaledFrame, framePTSClock);
+                queue_frame(videoInfo, scaledFrame, ptsClock);
             } while (ret == 0);
         } while (ret == 0);
         av_packet_free(&packet);
