@@ -212,8 +212,10 @@ double syncing_video(VideoInfo *videoInfo, AVFrame *frame, double clock) {
     return clock;
 }
 
-void error_out(string msg) {
-    cerr << msg << endl;
+void error_out(string msg, int errCode = 0) {
+    char a[AV_ERROR_MAX_STRING_SIZE] = {0};
+    av_make_error_string(a, AV_ERROR_MAX_STRING_SIZE, errCode);
+    cerr << msg << "error:" << a << endl;
     exit(1);
 }
 
@@ -427,11 +429,11 @@ void decodeVideo(VideoInfo *videoInfo) {
                 break;
             }
             if (ret < 0) {
-                error_out("decode video:failed in receive frame");
+                error_out("decode video:failed in receive frame", ret);
             }
             ret = av_buffersrc_add_frame_flags(videoInfo->bufferSrcFilterCtx, &frame, AV_BUFFERSRC_FLAG_KEEP_REF);
             if (ret < 0) {
-                error_out("failed in buffersrc add frame");
+                error_out("failed in buffersrc add frame", ret);
             }
             auto scaledFrame = av_frame_alloc();
             do {
@@ -440,7 +442,7 @@ void decodeVideo(VideoInfo *videoInfo) {
                     break;
                 }
                 if (ret < 0) {
-                    error_out("failed iin buffer sink get frame");
+                    error_out("failed iin buffer sink get frame", ret);
                 }
                 sws_scale(videoInfo->swsContext,
                           frame.data,
@@ -575,7 +577,7 @@ int main(int argc, char **argv) {
     }
     auto ret = avformat_open_input(&formatContext, argv[1], nullptr, nullptr);
     if (ret < 0) {
-        error_out("failed in open input");
+        error_out("failed in open input", ret);
     }
     if (avformat_find_stream_info(formatContext, nullptr) < 0) {
         error_out("failed in find stream info");
