@@ -53,7 +53,7 @@ int main(int argc, char **argv) {
     output = string(argv[2]);
     uint8_t inbuf[INBUF_SIZE + AV_INPUT_BUFFER_PADDING_SIZE];
     memset(inbuf + INBUF_SIZE, 0, AV_INPUT_BUFFER_PADDING_SIZE);
-    AVCodec *codec = avcodec_find_decoder(AV_CODEC_ID_H264);
+    const AVCodec *codec = avcodec_find_decoder(AV_CODEC_ID_H264);
     if (codec == nullptr) {
         cerr << "Codec not found" << endl;
         exit(1);
@@ -105,6 +105,6 @@ int main(int argc, char **argv) {
     av_parser_close(parser);
     avcodec_free_context(&c);
     av_frame_free(&frame);
-    av_packet_free(&pkg);
+    av_packet_free(&pkt);
     return 0;
 }

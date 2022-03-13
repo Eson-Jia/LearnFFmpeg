@@ -143,6 +143,7 @@ int main(int argc, char **argv)
             }
             data      += ret;
             data_size -= ret;
+            av_packet_pack_dictionary()
             if (pkt->size)
                 decode(c, frame, pkt, outfilename);
         }

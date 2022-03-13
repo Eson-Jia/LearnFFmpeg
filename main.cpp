@@ -10,6 +10,7 @@ extern "C"{
 #include <libswscale/swscale.h>
 #include <libpostproc/postprocess.h>
 }
+#include "FFmpeg.h"
 using namespace std;
 int main() {
     int avformatVersion = avformat_version();
@@ -29,6 +30,6 @@ int main() {
     int postprocVersion = postproc_version();
     cout << "postproc version:" << postprocVersion <<endl;
     this_thread::sleep_for(chrono::milliseconds (1));
-    return 0;
+    FFmpeg::test_flush();
 }
 

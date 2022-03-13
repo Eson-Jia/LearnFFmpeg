@@ -8,7 +8,7 @@ IF (APPLE)
     link_directories(/usr/local/lib)
 ENDIF ()
 
-add_executable(LearnFFmpeg main.cpp)
+add_executable(LearnFFmpeg FFmpeg.cpp main.cpp)
 target_link_libraries(
         LearnFFmpeg
         avformat
@@ -274,6 +274,18 @@ target_link_libraries(
 )
 
 add_executable(muxing muxing.c)
+
+target_link_libraries(
+        muxing
+        m
+        avutil
+        avformat
+        swscale
+        swresample
+        avcodec
+)
+
+add_executable(run_FFmepg run_FFmepg.cpp FFmpeg.cpp)
 
 target_link_libraries(
         muxing
